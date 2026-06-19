@@ -1,0 +1,2 @@
+[Tragamonedas] Rodillos=('🔔', '🍋', '🍋')  Apuesta=10  Premio=0  Saldo=1990
+[Tragamonedas] Rodillos=('🍋', '🔔', '🍋')  Apuesta=10  Premio=0  Saldo=1980
