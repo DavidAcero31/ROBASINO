@@ -8,9 +8,8 @@ from vistas.casino_com import Jugador, JuegoBase
 
 SIMBOLOS = ["🍒", "🍋", "🔔", "⭐", "💎", "🃏"]
 
-
 PREMIOS = {
-    ("💎", "💎", "💎"): 10,   # jackpot
+    ("💎", "💎", "💎"): 10,
     ("⭐", "⭐", "⭐"):  7,
     ("🔔", "🔔", "🔔"):  5,
     ("🍒", "🍒", "🍒"):  4,
@@ -34,17 +33,15 @@ class vistaTragamonedas(JuegoBase):
         self._hilo_sonido: threading.Thread | None = None
         self._hilo_guardado: threading.Thread | None = None
 
-        # Historial de partidas (recurso compartido entre hilos)
         self._historial: list[dict] = []
-        self._lock_historial = threading.Lock()   # Candado para el historial
+        self._lock_historial = threading.Lock()
 
-        # Variables Tkinter (se crean en construir_ventana)
         self._var_apuesta: tk.IntVar | None = None
         self._var_creditos: tk.StringVar | None = None
         self._vars_rodillos: list[tk.StringVar] = []
         self._btn_girar: ttk.Button | None = None
         self._lbl_resultado: tk.Label | None = None
-        self._lbl_estado_hilo: tk.Label | None = None
+        self._log_text: tk.Text | None = None          # ← panel de log en tiempo real
 
         self._construir_ventana()
 
@@ -53,7 +50,6 @@ class vistaTragamonedas(JuegoBase):
     # ------------------------------------------------------------------
 
     def _construir_ventana(self) -> None:
-        """Crea y configura todos los widgets de la ventana de Tragamonedas."""
 
         self._ventana = tk.Toplevel(self._ventana_padre)
         self._ventana.title("🎰 ROBASINO — Tragamonedas")
@@ -70,9 +66,7 @@ class vistaTragamonedas(JuegoBase):
         ).pack(pady=(16, 4))
 
         # ---- Créditos ----
-        self._var_creditos = tk.StringVar(
-            value=f"Créditos: {self.jugador.creditos}"
-        )
+        self._var_creditos = tk.StringVar(value=f"Créditos: {self.jugador.creditos}")
         tk.Label(
             self._ventana,
             textvariable=self._var_creditos,
@@ -118,14 +112,25 @@ class vistaTragamonedas(JuegoBase):
             font=("Helvetica", 11),
         ).grid(row=0, column=1, padx=4)
 
-        # ---- Botón girar ----
+        # ---- Botones (GIRAR + DEMO) ----
+        marco_botones = tk.Frame(self._ventana, bg="#1a1a2e")
+        marco_botones.pack(pady=10)
+
         self._btn_girar = ttk.Button(
-            self._ventana,
+            marco_botones,
             text="🎰  GIRAR",
             command=self._iniciar_giro,
             width=18,
         )
-        self._btn_girar.pack(pady=10)
+        self._btn_girar.grid(row=0, column=0, padx=6)
+
+        self._btn_demo = ttk.Button(
+            marco_botones,
+            text="⚡ DEMO Race Condition",
+            command=self._iniciar_demo_race,
+            width=22,
+        )
+        self._btn_demo.grid(row=0, column=1, padx=6)
 
         # ---- Resultado ----
         self._lbl_resultado = tk.Label(
@@ -134,39 +139,88 @@ class vistaTragamonedas(JuegoBase):
             font=("Helvetica", 12, "bold"),
             fg="#f5c518",
             bg="#1a1a2e",
-            wraplength=320,
+            wraplength=380,
         )
         self._lbl_resultado.pack(pady=4)
 
-        # ---- Estado de hilos (sección educativa) ----
+        # ---- Panel de log en tiempo real ----
         tk.Label(
             self._ventana,
-            text="— Estado de hilos —",
+            text="— Monitor de hilos en tiempo real —",
             font=("Helvetica", 9, "italic"),
             fg="#888",
             bg="#1a1a2e",
-        ).pack(pady=(12, 0))
+        ).pack(pady=(10, 0))
 
-        self._lbl_estado_hilo = tk.Label(
-            self._ventana,
-            text="Sin actividad.",
-            font=("Helvetica", 9),
-            fg="#aaa",
-            bg="#1a1a2e",
-            wraplength=340,
-            justify="left",
+        marco_log = tk.Frame(self._ventana, bg="#0d0d1a")
+        marco_log.pack(padx=16, pady=(2, 16), fill="both")
+
+        self._log_text = tk.Text(
+            marco_log,
+            height=10,
+            width=58,
+            bg="#0d0d1a",
+            fg="#c8c8c8",
+            font=("Courier", 9),
+            state="disabled",
+            relief="flat",
+            wrap="word",
         )
-        self._lbl_estado_hilo.pack(padx=20, pady=(0, 16))
+        scrollbar = tk.Scrollbar(marco_log, command=self._log_text.yview)
+        self._log_text.configure(yscrollcommand=scrollbar.set)
+        self._log_text.pack(side="left", fill="both")
+        scrollbar.pack(side="right", fill="y")
+
+        # Colores por tipo de evento
+        self._log_text.tag_config("titulo",   foreground="#f5c518", font=("Courier", 9, "bold"))
+        self._log_text.tag_config("ok",       foreground="#00d4aa")
+        self._log_text.tag_config("warn",     foreground="#ff6b6b")
+        self._log_text.tag_config("lock",     foreground="#a78bfa")
+        self._log_text.tag_config("info",     foreground="#94a3b8")
+        self._log_text.tag_config("separador",foreground="#444")
+
+        self._log("Sistema iniciado. Jugador: "
+                  f"{self.jugador.nombre} | Saldo: {self.jugador.creditos}", "ok")
 
     # ------------------------------------------------------------------
-    # Lógica de inicio de giro
+    # Helper: escribir en el panel de log (thread-safe vía after)
+    # ------------------------------------------------------------------
+
+    def _log(self, mensaje: str, tag: str = "info") -> None:
+        hilo = threading.current_thread().name
+        ts   = time.strftime("%H:%M:%S")
+        linea = f"[{ts}][{hilo}] {mensaje}\n"
+
+        def _escribir():
+            self._log_text.config(state="normal")
+            self._log_text.insert("end", linea, tag)
+            self._log_text.see("end")
+            self._log_text.config(state="disabled")
+
+        self._ventana.after(0, _escribir)
+
+    def _log_sep(self, titulo: str = "") -> None:
+        sep = f"{'─'*20} {titulo} {'─'*20}\n" if titulo else "─" * 50 + "\n"
+        def _escribir():
+            self._log_text.config(state="normal")
+            self._log_text.insert("end", sep, "separador")
+            self._log_text.see("end")
+            self._log_text.config(state="disabled")
+        self._ventana.after(0, _escribir)
+
+    # ------------------------------------------------------------------
+    # Lógica de inicio de giro normal
     # ------------------------------------------------------------------
 
     def _iniciar_giro(self) -> None:
 
         monto = self._var_apuesta.get()
+        self._log_sep("GIRAR")
+        self._log(f"Botón GIRAR presionado — apuesta: {monto}", "titulo")
 
+        self._log(f"hilo_principal llama jugador.apostar({monto}) …", "info")
         if not self.jugador.apostar(monto):
+            self._log(f"RECHAZADO — saldo insuficiente ({self.jugador.creditos})", "warn")
             messagebox.showwarning(
                 "Créditos insuficientes",
                 f"No tienes suficientes créditos para apostar {monto}.\n"
@@ -174,12 +228,12 @@ class vistaTragamonedas(JuegoBase):
             )
             return
 
-        # Deshabilitar botón mientras el giro está activo
-        self._btn_girar.config(state="disabled")
-        self._lbl_resultado.config(text="Girando…")
-        self._actualizar_estado_hilo("🟡 hilo_giro: INICIANDO  |  hilo_sonido: EN ESPERA")
+        self._log(f"Apuesta aceptada → saldo ahora: {self.jugador.creditos}", "ok")
 
-        # Lanzar hilos concurrentes
+        self._btn_girar.config(state="disabled")
+        self._btn_demo.config(state="disabled")
+        self._lbl_resultado.config(text="Girando…")
+
         self._hilo_giro = threading.Thread(
             target=self._ejecutar_giro, args=(monto,), daemon=True, name="hilo_giro"
         )
@@ -187,6 +241,7 @@ class vistaTragamonedas(JuegoBase):
             target=self._simular_sonido, daemon=True, name="hilo_sonido"
         )
 
+        self._log("Lanzando hilo_giro y hilo_sonido en paralelo …", "lock")
         self._hilo_giro.start()
         self._hilo_sonido.start()
 
@@ -196,39 +251,36 @@ class vistaTragamonedas(JuegoBase):
 
     def _ejecutar_giro(self, monto: int) -> None:
 
-        self._actualizar_estado_hilo(
-            "🟢 hilo_giro: EJECUTANDO  |  hilo_sonido: EJECUTANDO"
-        )
+        self._log("hilo_giro ACTIVO — animando rodillos", "ok")
 
-        # --- Animación de rodillos ---
         for _ in range(FRAMES_ANIMACION):
             simbolos_frame = [random.choice(SIMBOLOS) for _ in range(3)]
             for var, sym in zip(self._vars_rodillos, simbolos_frame):
                 var.set(sym)
             time.sleep(DELAY_ANIMACION)
 
-        # --- Resultado final ---
         resultado_final = tuple(random.choice(SIMBOLOS) for _ in range(3))
         for var, sym in zip(self._vars_rodillos, resultado_final):
             var.set(sym)
 
-        # --- Calcular premio ---
         multiplicador = PREMIOS.get(resultado_final, 0)
         premio = monto * multiplicador
 
         if premio > 0:
+            self._log(f"Premio calculado: {premio} — llamando jugador.acreditar({premio})", "info")
             self.jugador.acreditar(premio)
+            self._log(f"Acreditado. Saldo ahora: {self.jugador.creditos}", "ok")
             mensaje = (
                 f"🎉 ¡GANASTE!  {resultado_final[0]} {resultado_final[1]} {resultado_final[2]}\n"
                 f"Premio: {premio} créditos  (×{multiplicador})"
             )
         else:
+            self._log(f"Sin premio. Saldo tras apuesta: {self.jugador.creditos}", "info")
             mensaje = (
                 f"😞 Perdiste.  {resultado_final[0]} {resultado_final[1]} {resultado_final[2]}\n"
                 f"Apuesta perdida: {monto} créditos."
             )
 
-        # --- Lanzar hilo de guardado ---
         partida = {
             "rodillos": resultado_final,
             "apuesta": monto,
@@ -239,38 +291,34 @@ class vistaTragamonedas(JuegoBase):
             target=self._guardar_resultado, args=(partida,),
             daemon=True, name="hilo_guardado"
         )
+        self._log("Lanzando hilo_guardado para escribir historial …", "lock")
         self._hilo_guardado.start()
 
-        # --- Actualizar UI desde el hilo (seguro con after()) ---
         self._ventana.after(0, self._finalizar_giro, mensaje)
 
     # ------------------------------------------------------------------
-    # Hilo de sonido (simulado)
+    # Hilo de sonido
     # ------------------------------------------------------------------
 
     def _simular_sonido(self) -> None:
-
+        self._log("hilo_sonido ACTIVO — simulando audio", "info")
         tiempo_total = FRAMES_ANIMACION * DELAY_ANIMACION + 0.5
         time.sleep(tiempo_total)
-        # Sonido finalizado — no hay acción visible en la UI
+        self._log("hilo_sonido TERMINADO", "info")
 
     # ------------------------------------------------------------------
-    # Hilo de almacenamiento (con control de condición de carrera)
+    # Hilo de guardado
     # ------------------------------------------------------------------
 
     def _guardar_resultado(self, partida: dict) -> None:
 
-        self._actualizar_estado_hilo(
-            "🟢 hilo_giro: FINALIZANDO  |  hilo_guardado: ESCRIBIENDO"
-        )
-
-        # Acceso exclusivo al historial compartido
+        self._log("hilo_guardado: esperando lock_historial …", "lock")
         with self._lock_historial:
+            self._log("hilo_guardado: LOCK ADQUIRIDO — escribiendo historial", "lock")
             self._historial.append(partida)
-            # Simula latencia de escritura en disco
             time.sleep(0.05)
+            self._log(f"hilo_guardado: historial tiene {len(self._historial)} partidas — liberando lock", "lock")
 
-        # Log en archivo de texto (opcional)
         try:
             with open("robasino_log.txt", "a", encoding="utf-8") as f:
                 f.write(
@@ -280,12 +328,99 @@ class vistaTragamonedas(JuegoBase):
                     f"Saldo={partida['saldo_tras_partida']}\n"
                 )
         except OSError:
-            pass  # Si no se puede escribir el log, continúa sin error fatal
+            pass
 
-        self._actualizar_estado_hilo("⚪ Todos los hilos: EN REPOSO")
+        self._log("hilo_guardado TERMINADO. Todos los hilos en reposo.", "ok")
 
     # ------------------------------------------------------------------
-    # Método público: jugar() — requerido por JuegoBase
+    # DEMO Race Condition
+    # Lanza dos hilos que compiten por jugador.apostar() sobre el mismo
+    # objeto Jugador, primero sin lock (subclase rota) y luego con lock.
+    # ------------------------------------------------------------------
+
+    def _iniciar_demo_race(self) -> None:
+        self._btn_girar.config(state="disabled")
+        self._btn_demo.config(state="disabled")
+        threading.Thread(
+            target=self._ejecutar_demo_race,
+            daemon=True,
+            name="hilo_demo"
+        ).start()
+
+    def _ejecutar_demo_race(self) -> None:
+        # ── Capturamos saldo actual real del jugador ──────────────────
+        saldo_real = self.jugador.creditos
+
+        self._log_sep("DEMO RACE CONDITION")
+        self._log(f"Saldo actual del jugador: {saldo_real}", "titulo")
+        self._log("Vamos a lanzar DOS hilos que intentan apostar 200 al mismo tiempo.", "titulo")
+
+        # ── FASE 1: SIN LOCK — subclase que bypasea el candado ───────
+        self._log_sep("FASE 1: SIN Lock")
+        self._log("Creamos JugadorSINLock con el mismo saldo actual …", "warn")
+
+        jugador_roto = _JugadorSINLock(
+            self.jugador.nombre + "_ROTO",
+            creditos_iniciales=saldo_real,
+            log_fn=self._log,
+        )
+
+        barrera = threading.Barrier(2)   # sincroniza los dos hilos para que arranquen juntos
+
+        def apostar_sin_lock(nombre_hilo, monto):
+            barrera.wait()               # espera a que ambos hilos estén listos → máxima colisión
+            jugador_roto.apostar_inseguro(monto, nombre_hilo)
+
+        h1 = threading.Thread(target=apostar_sin_lock, args=("juego_Ruleta", 200),        name="hilo_Ruleta_ROTO")
+        h2 = threading.Thread(target=apostar_sin_lock, args=("juego_Tragamonedas", 200),  name="hilo_Tragamonedas_ROTO")
+
+        h1.start(); h2.start()
+        h1.join();  h2.join()
+
+        saldo_roto = jugador_roto._creditos
+        self._log(f"Saldo final SIN lock: {saldo_roto}  (esperado: nunca negativo)", "warn")
+        if saldo_roto < 0:
+            self._log(f"⚠️  SALDO NEGATIVO — se autorizaron {saldo_real - saldo_roto} créditos sobre {saldo_real} disponibles", "warn")
+        else:
+            self._log("Esta vez no hubo colisión visible — el planificador no interrumpió en el momento exacto.", "info")
+            self._log("Eso es la naturaleza no determinista de las race conditions.", "info")
+
+        time.sleep(0.4)
+
+        # ── FASE 2: CON LOCK — jugador.apostar() real ─────────────────
+        self._log_sep("FASE 2: CON Lock (casino_com.Jugador real)")
+        self._log(f"Mismo escenario — saldo: {saldo_real} — dos hilos apostan 200 simultáneamente", "ok")
+
+        # Creamos un jugador auxiliar con el mismo saldo para no afectar la partida real
+        jugador_seguro = _JugadorCONLog(
+            self.jugador.nombre + "_SEGURO",
+            creditos_iniciales=saldo_real,
+            log_fn=self._log,
+        )
+
+        barrera2 = threading.Barrier(2)
+
+        def apostar_con_lock(nombre_hilo, monto):
+            barrera2.wait()
+            jugador_seguro.apostar_logeado(monto, nombre_hilo)
+
+        h3 = threading.Thread(target=apostar_con_lock, args=("juego_Ruleta", 200),        name="hilo_Ruleta_OK")
+        h4 = threading.Thread(target=apostar_con_lock, args=("juego_Tragamonedas", 200),  name="hilo_Tragamonedas_OK")
+
+        h3.start(); h4.start()
+        h3.join();  h4.join()
+
+        saldo_ok = jugador_seguro.creditos
+        self._log(f"Saldo final CON lock: {saldo_ok}", "ok")
+        self._log("✅ El Lock garantizó que solo un hilo a la vez leyó-verificó-escribió el saldo.", "ok")
+        self._log_sep("FIN DEMO")
+
+        # Re-habilitar botones
+        self._ventana.after(0, lambda: self._btn_girar.config(state="normal"))
+        self._ventana.after(0, lambda: self._btn_demo.config(state="normal"))
+
+    # ------------------------------------------------------------------
+    # jugar() — requerido por JuegoBase
     # ------------------------------------------------------------------
 
     def jugar(self, monto: int) -> dict:
@@ -307,30 +442,59 @@ class vistaTragamonedas(JuegoBase):
         }
 
     # ------------------------------------------------------------------
-    # Helpers de actualización de UI
+    # Helpers UI
     # ------------------------------------------------------------------
 
     def _finalizar_giro(self, mensaje: str) -> None:
-
         self._lbl_resultado.config(text=mensaje)
         self._var_creditos.set(f"Créditos: {self.jugador.creditos}")
         self._btn_girar.config(state="normal")
+        self._btn_demo.config(state="normal")
 
     def _actualizar_estado_hilo(self, texto: str) -> None:
-
-        self._ventana.after(0, lambda: self._lbl_estado_hilo.config(text=texto))
+        # Mantenemos compatibilidad por si algo externo lo llama
+        self._log(texto, "info")
 
 
 # ---------------------------------------------------------------------------
-# Punto de entrada: lanzar solo la ventana de Tragamonedas para pruebas
+# Clases auxiliares usadas SOLO por la demo — no forman parte del juego real
 # ---------------------------------------------------------------------------
 
-# if __name__ == "__main__":
-#     root = tk.Tk()
-#     root.title("ROBASINO — Prueba Tragamonedas")
-#     root.withdraw()   # Oculta la ventana raíz vacía
+class _JugadorSINLock:
+    """Replica el saldo de Jugador pero apostar_inseguro() no usa Lock.
+       Expone la ventana de race condition idéntica a la descrita en clase."""
 
-#     jugador_prueba = Jugador("TestPlayer", creditos_iniciales=2000)
-#     juego = Tragamonedas(jugador_prueba, root)
+    def __init__(self, nombre: str, creditos_iniciales: int, log_fn):
+        self.nombre = nombre
+        self._creditos = creditos_iniciales
+        self._log = log_fn
 
-#     root.mainloop()
+    def apostar_inseguro(self, monto: int, quien: str) -> bool:
+        self._log(f"{quien} lee saldo → {self._creditos}", "warn")
+        if self._creditos >= monto:
+            time.sleep(0.002)                      # ← ventana donde el SO puede cambiar de hilo
+            self._creditos -= monto                # escritura sin protección
+            self._log(f"{quien} descuenta {monto} → saldo ahora: {self._creditos}", "warn")
+            return True
+        self._log(f"{quien} RECHAZADO (saldo={self._creditos} < {monto})", "warn")
+        return False
+
+
+class _JugadorCONLog(Jugador):
+    """Jugador real con logging extra para visualizar el Lock en acción."""
+
+    def __init__(self, nombre: str, creditos_iniciales: int, log_fn):
+        super().__init__(nombre, creditos_iniciales)
+        self._log_fn = log_fn
+
+    def apostar_logeado(self, monto: int, quien: str) -> bool:
+        self._log_fn(f"{quien} intenta adquirir Lock para apostar {monto} …", "lock")
+        with self._lock:
+            self._log_fn(f"{quien} LOCK ADQUIRIDO — saldo actual: {self._creditos}", "lock")
+            if self._creditos >= monto:
+                time.sleep(0.002)                  # misma latencia simulada
+                self._creditos -= monto
+                self._log_fn(f"{quien} descuenta {monto} → saldo: {self._creditos} — liberando Lock", "ok")
+                return True
+            self._log_fn(f"{quien} RECHAZADO (saldo={self._creditos} < {monto}) — liberando Lock", "warn")
+            return False
