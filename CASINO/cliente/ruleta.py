@@ -3,10 +3,31 @@ import threading, queue, random, math, os
 
 # ── Colores ──────────────────────────────────────────────────────
 class T:
-    BG="#0a0a0f"; FELT="#0d2b1a"; GOLD="#c8960c"; GOLD2="#f0c040"
-    RED="#c0392b"; BLACK="#1a1a1a"; GREEN="#27ae60"; PARCH="#cfd9cc"
-    LEAF="#a8924f"; LEAF_HI="#d4b86a"; DEEP="#01130b"
-    RELIEF="#16301f"; RELIEF_LO="#0d2417"; BORDER="#395d4a"; DIM="#555566"
+    # Base oscura — negro verdoso como la imagen
+    DEEP      = "#060e08"   # fondo general, casi negro
+    RELIEF    = "#0c1f10"   # paneles principales
+    RELIEF_LO = "#081509"   # paneles hundidos / celdas
+    BORDER    = "#1a4a22"   # bordes y líneas internas
+    TABLE     = "#071208"   # mesa de apuestas
+
+    # Verdes brillantes (filigrana y resaltes)
+    GREEN     = "#1a7a2a"   # cero de la ruleta
+    FELT      = "#0a2a10"
+
+    # Dorados envejecidos (igual que los grabados de la imagen)
+    LEAF      = "#7a6a2a"   # dorado apagado — bordes de panel
+    LEAF_HI   = "#a8943c"   # dorado más brillante — títulos
+
+    # Texto y fichas
+    PARCH     = "#8aaa80"   # texto secundario (verde grisáceo)
+    DIM       = "#2a3a2a"   # texto muy apagado
+
+    # Rojo y negro de los sectores
+    RED       = "#8b1a1a"   # rojo oscuro, casi vino
+    BLACK     = "#0d0d0d"   # negro puro
+
+    # Misc (se mantienen para compatibilidad)
+    BG=DEEP; FELT=FELT; GOLD="#7a6a2a"; GOLD2="#a8943c"
 
 # ── Rueda ────────────────────────────────────────────────────────
 class Wheel:
@@ -101,7 +122,7 @@ class RouletteUI:
         self._frame_q=self._worker=None
         self._chip_btns={}; self._history=[]
 
-        root.title("Casino Royal — Ruleta Europea")
+        root.title("Robasino — Ruleta")
         root.configure(bg=T.DEEP); root.resizable(False,False)
 
         self._build_bg()
@@ -143,7 +164,7 @@ class RouletteUI:
     def _build_header(self):
         self._panel(20,16,self.W-40,64)
         hdr=tk.Frame(self.cv,bg=T.RELIEF); self._place(hdr,36,24)
-        tk.Label(hdr,text="♠  CASINO ROYAL  ♠",bg=T.RELIEF,fg=T.LEAF_HI,
+        tk.Label(hdr,text="♠  ROBASINO RULETA  ♠",bg=T.RELIEF,fg=T.LEAF_HI,
                 font=("Georgia",24,"bold")).pack(side="left")
         bf=tk.Frame(self.cv,bg=T.RELIEF_LO,highlightbackground=T.LEAF,
                     highlightthickness=1,padx=16,pady=6)
