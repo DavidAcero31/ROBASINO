@@ -117,15 +117,9 @@ class MenuPrincipal:
         )
         self.lbl_perfil_icono.place(x=15, y=20)
 
-        # Nota: faltaba el prefijo f"" — antes se mostraba literalmente
-        # "{self.jugador.nombre}" en pantalla en vez del nombre real.
         self.lbl_perfil_nombre = tk.Label(
             self.frame_perfil,
-<<<<<<< HEAD
             text=f"Nombre:  {self.jugador.usuario}",
-=======
-            text=f"Nombre: {self.jugador.nombre}",
->>>>>>> 546344d (cambios de diseño principalmente en dados y tragamonedas, añadido fucion de reajuste de pantalla en menú principal)
             bg="#001a00",
             fg="#66ff66",
             font=("Arial", 11)
