@@ -20,6 +20,8 @@ from controladores.blackjack_game import BlackjackGame
 import controladores.database as database
 from controladores.database import UsuarioExistente, CorreoExistente, CreditosInsuficientes
 import controladores.ruleta_logic as ruleta_logic
+from modelos.modelo_dados import ModeloDados, EstadoRonda
+from modelos.modelo_tragamonedas import ModeloTragamonedas
 
 
 SERVER_HOST = "0.0.0.0"
@@ -56,7 +58,19 @@ class CasinoServer:
         # en cada partida. None si la BD no está disponible.
         self.id_juego_blackjack = None
         self.id_juego_ruleta = None
+        self.id_juego_dados = None
+        self.id_juego_tragamonedas = None
         self.ruleta_round_counter = 1
+        self.dados_round_counter = 1
+        self.tragamonedas_round_counter = 1
+        # Rondas de dados activas por client_id: {"modelo": ModeloDados(),
+        # "apuesta": int}. El craps tiene varios lanzamientos por ronda
+        # (tirada inicial + posibles continuaciones hasta ganar/perder),
+        # así que el estado vive aquí mientras la ronda esté abierta.
+        self.dados_rondas = {}
+        # Tragamonedas no tiene estado entre tiradas: una sola instancia
+        # del modelo alcanza para todos los jugadores.
+        self.modelo_tragamonedas = ModeloTragamonedas()
         # ------------------------
         # LOCK PARA ESTADO COMPARTIDO
         # ------------------------
@@ -237,6 +251,18 @@ class CasinoServer:
                     "Advertencia: no se encontró el juego 'ruleta' en la tabla "
                     "`juego`. Revisa la semilla de base_casino.sql."
                 )
+            self.id_juego_dados = database.obtener_id_juego("dados")
+            if self.id_juego_dados is None:
+                self.registrar_evento(
+                    "Advertencia: no se encontró el juego 'dados' en la tabla "
+                    "`juego`. Revisa la semilla de base_casino.sql."
+                )
+            self.id_juego_tragamonedas = database.obtener_id_juego("tragamonedas")
+            if self.id_juego_tragamonedas is None:
+                self.registrar_evento(
+                    "Advertencia: no se encontró el juego 'tragamonedas' en la "
+                    "tabla `juego`. Revisa la semilla de base_casino.sql."
+                )
             self.ui_queue.put(("db_estado", ("Base de datos: Conectada", "lime")))
             self.registrar_evento("Conexión a la base de datos establecida.")
         except Exception as e:
@@ -331,6 +357,7 @@ class CasinoServer:
 
         with self.lock:
             self.forfeit_game_for(client_id)
+            self.dados_rondas.pop(client_id, None)
             if client_id in self.waiting_players:
                 self.waiting_players.remove(client_id)
             if client_id in self.clients:
@@ -392,6 +419,16 @@ class CasinoServer:
                 )
             elif accion == "girar_ruleta":
                 self.handle_girar_ruleta(client_id, mensaje)
+            # -------------------------------
+            # DADOS (CRAPS)
+            # -------------------------------
+            elif accion == "tirar_dados":
+                self.handle_tirar_dados(client_id, mensaje)
+            # -------------------------------
+            # TRAGAMONEDAS
+            # -------------------------------
+            elif accion == "jugar_tragamonedas":
+                self.handle_jugar_tragamonedas(client_id, mensaje)
             # -------------------------------
             # DESCONOCIDO
             # -------------------------------
@@ -669,6 +706,222 @@ class CasinoServer:
         )
 
         self.ui_queue.put(("refresh", None))
+
+    # ======================================================
+    # TIRAR DADOS (CRAPS) — puede requerir varios lanzamientos por ronda
+    # ======================================================
+
+    def handle_tirar_dados(self, client_id, mensaje):
+        # Se asume que ya se posee self.lock.
+
+        id_jugador = self.clients[client_id].get("id_jugador")
+        creditos = self.clients[client_id].get("creditos")
+
+        if id_jugador is None or creditos is None:
+            self.send_message(
+                client_id,
+                {"accion": "dados_error", "mensaje": "Debes iniciar sesión antes de apostar."}
+            )
+            return
+
+        ronda = self.dados_rondas.get(client_id)
+
+        if ronda is None:
+            # No hay ronda abierta: este lanzamiento es la tirada inicial,
+            # así que se requiere y se cobra la apuesta.
+            apuesta = mensaje.get("apuesta")
+
+            if not isinstance(apuesta, int) or apuesta <= 0:
+                self.send_message(
+                    client_id,
+                    {"accion": "dados_error", "mensaje": "La apuesta debe ser un entero positivo."}
+                )
+                return
+
+            if apuesta > creditos:
+                self.send_message(
+                    client_id,
+                    {"accion": "dados_error", "mensaje": f"No tienes suficientes créditos (tienes {creditos})."}
+                )
+                return
+
+            try:
+                nuevo_saldo = database.actualizar_creditos(id_jugador, -apuesta)
+            except CreditosInsuficientes:
+                self.send_message(
+                    client_id,
+                    {"accion": "dados_error", "mensaje": "No tienes suficientes créditos."}
+                )
+                return
+            except Exception as e:
+                self.registrar_evento(f"Error de BD al cobrar apuesta de dados: {e}")
+                self.send_message(
+                    client_id,
+                    {"accion": "dados_error", "mensaje": "Error de base de datos. Intenta más tarde."}
+                )
+                return
+
+            self.clients[client_id]["creditos"] = nuevo_saldo
+
+            self.dados_rondas[client_id] = {
+                "modelo": ModeloDados(),
+                "apuesta": apuesta
+            }
+            ronda = self.dados_rondas[client_id]
+        elif mensaje.get("apuesta") is not None:
+            # Ya hay una ronda en curso (punto establecido): no se vuelve
+            # a cobrar aunque el cliente mande una apuesta por error.
+            self.registrar_evento(
+                f"{self.clients[client_id]['usuario']} envió una apuesta en un "
+                f"lanzamiento de continuación de dados; se ignora."
+            )
+
+        modelo = ronda["modelo"]
+        apuesta = ronda["apuesta"]
+
+        # Resultado autoritativo: SOLO el servidor tira los dados.
+        resultado, estado = modelo.lanzar()
+
+        premio = 0
+        ronda_activa = estado in (EstadoRonda.TIRADA_INICIAL, EstadoRonda.PUNTO_ESTABLECIDO)
+
+        if estado == EstadoRonda.GANADA:
+            premio = apuesta * 2
+            try:
+                nuevo_saldo = database.actualizar_creditos(id_jugador, premio)
+                self.clients[client_id]["creditos"] = nuevo_saldo
+            except Exception as e:
+                self.registrar_evento(f"Error de BD al pagar premio de dados: {e}")
+
+        if not ronda_activa:
+            del self.dados_rondas[client_id]
+
+        self.registrar_evento(
+            f"{self.clients[client_id]['usuario']} tiró los dados: "
+            f"{resultado.dado1}-{resultado.dado2} (suma {resultado.suma}), "
+            f"estado {estado.value}, apuesta {apuesta}, premio {premio}."
+        )
+
+        if estado in (EstadoRonda.GANADA, EstadoRonda.PERDIDA):
+            resultado_bd = "gano" if estado == EstadoRonda.GANADA else "perdio"
+            ronda_id = self.dados_round_counter
+            self.dados_round_counter += 1
+            self._guardar_resultado_bd(
+                ronda_id, client_id, resultado_bd,
+                valor_apuesta=apuesta, premio=premio,
+                id_juego=self.id_juego_dados
+            )
+
+        self.send_message(
+            client_id,
+            {
+                "accion": "resultado_dados",
+                "dado1": resultado.dado1,
+                "dado2": resultado.dado2,
+                "suma": resultado.suma,
+                "estado": estado.value,
+                "punto": modelo.obtener_punto(),
+                "ronda_activa": ronda_activa,
+                "premio": premio,
+                "creditos": self.clients[client_id]["creditos"]
+            }
+        )
+
+        self.ui_queue.put(("refresh", None))
+
+    # ======================================================
+    # JUGAR TRAGAMONEDAS (apuesta + resultado en una sola acción)
+    # ======================================================
+
+    def handle_jugar_tragamonedas(self, client_id, mensaje):
+        # Se asume que ya se posee self.lock.
+
+        id_jugador = self.clients[client_id].get("id_jugador")
+        creditos = self.clients[client_id].get("creditos")
+
+        if id_jugador is None or creditos is None:
+            self.send_message(
+                client_id,
+                {"accion": "tragamonedas_error", "mensaje": "Debes iniciar sesión antes de apostar."}
+            )
+            return
+
+        apuesta = mensaje.get("apuesta")
+
+        if not isinstance(apuesta, int) or apuesta <= 0:
+            self.send_message(
+                client_id,
+                {"accion": "tragamonedas_error", "mensaje": "La apuesta debe ser un entero positivo."}
+            )
+            return
+
+        if apuesta > creditos:
+            self.send_message(
+                client_id,
+                {"accion": "tragamonedas_error", "mensaje": f"No tienes suficientes créditos (tienes {creditos})."}
+            )
+            return
+
+        try:
+            nuevo_saldo = database.actualizar_creditos(id_jugador, -apuesta)
+        except CreditosInsuficientes:
+            self.send_message(
+                client_id,
+                {"accion": "tragamonedas_error", "mensaje": "No tienes suficientes créditos."}
+            )
+            return
+        except Exception as e:
+            self.registrar_evento(f"Error de BD al cobrar apuesta de tragamonedas: {e}")
+            self.send_message(
+                client_id,
+                {"accion": "tragamonedas_error", "mensaje": "Error de base de datos. Intenta más tarde."}
+            )
+            return
+
+        self.clients[client_id]["creditos"] = nuevo_saldo
+
+        # Resultado autoritativo: SOLO el servidor decide los rodillos.
+        jugada = self.modelo_tragamonedas.jugar(apuesta)
+        premio = jugada["premio"]
+
+        if premio > 0:
+            try:
+                nuevo_saldo = database.actualizar_creditos(id_jugador, premio)
+                self.clients[client_id]["creditos"] = nuevo_saldo
+            except Exception as e:
+                self.registrar_evento(f"Error de BD al pagar premio de tragamonedas: {e}")
+
+        self.registrar_evento(
+            f"{self.clients[client_id]['usuario']} jugó tragamonedas: "
+            f"{jugada['nombres'][0]} {jugada['nombres'][1]} {jugada['nombres'][2]}, "
+            f"apostó {apuesta}, ganó {premio}."
+        )
+
+        ronda_id = self.tragamonedas_round_counter
+        self.tragamonedas_round_counter += 1
+
+        resultado_bd = "gano" if premio > 0 else "perdio"
+
+        self._guardar_resultado_bd(
+            ronda_id, client_id, resultado_bd,
+            valor_apuesta=apuesta, premio=premio,
+            id_juego=self.id_juego_tragamonedas
+        )
+
+        self.send_message(
+            client_id,
+            {
+                "accion": "resultado_tragamonedas",
+                "rodillos": jugada["resultado"],
+                "nombres": jugada["nombres"],
+                "multiplicador": jugada["multiplicador"],
+                "premio": premio,
+                "creditos": self.clients[client_id]["creditos"]
+            }
+        )
+
+        self.ui_queue.put(("refresh", None))
+
     # ======================================================
     # EMPAREJAR JUGADORES
     # ======================================================
