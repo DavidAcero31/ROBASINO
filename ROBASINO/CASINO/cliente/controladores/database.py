@@ -20,7 +20,7 @@ from mysql.connector import pooling
 # CONFIGURACIÓN — ajustar a tu entorno
 # ----------------------------------------------------------------
 DB_CONFIG = {
-    "host": "127.0.0.1",
+    "host": "10.56.131.94",
     "port": 3306,
     "user": "baseC",
     "password": "Flialfonsoperez",
