@@ -24,7 +24,9 @@ import tkinter as tk
 
 from PIL import Image, ImageTk
 
-SERVER_HOST = "127.0.0.1"
+from controladores.gestor_conexion import GestorConexion
+
+SERVER_HOST = "10.56.131.94"
 SERVER_PORT = 5555
 
 # ------------------------------------------------------------
@@ -75,7 +77,14 @@ class Login:
         self.pais = None
         self.nivel = None
         self.creditos = None
-        self.conexion = None  # Socket ya conectado y autenticado, para reutilizar
+        # GestorConexion (no un socket crudo) ya conectado y autenticado,
+        # para que el resto de la aplicación lo reutilice. Es el único
+        # punto de todo el cliente que lee del socket compartido (ver
+        # controladores/gestor_conexion.py); se crea recién cuando el
+        # login/registro tiene éxito, para no arrancar el hilo de
+        # escucha mientras aún se hace el intercambio síncrono de
+        # autenticación.
+        self.conexion = None
 
         self.modo_registro = tk.BooleanVar(value=False)
 
@@ -544,7 +553,12 @@ class Login:
             self.pais = respuesta.get("pais")
             self.nivel = respuesta.get("nivel")
             self.creditos = respuesta.get("creditos")
-            self.conexion = sock  # NO se cierra: el resto de la aplicación lo reutiliza
+            # A partir de aquí el socket pasa a ser propiedad de
+            # GestorConexion, que arranca su único hilo de escucha.
+            # Nadie más debe volver a llamar sock.recv() directamente;
+            # el resto de la aplicación reutiliza self.conexion (ahora
+            # un GestorConexion) en lugar del socket crudo.
+            self.conexion = GestorConexion(sock)
             self.ventana.destroy()
 
         elif accion_resp in ("login_error", "registro_error"):
