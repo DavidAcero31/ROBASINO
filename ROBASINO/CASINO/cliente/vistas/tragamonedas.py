@@ -31,13 +31,12 @@ COLOR_TEXTO_SEC = "#8fdba0"
 COLOR_RODILLO_BG = "#050F0A"      # casi negro: más contraste para las frutas
 COLOR_GANANCIA = "#7CFF9E"
 COLOR_PERDIDA = "#ff6b6b"
-COLOR_PAYLINE = "#FFD700"         # dorado encendido: marco de la línea de pago
+COLOR_PAYLINE = "#FFD700"         # dorado encendido: marco de la fila ganadora (solo al ganar)
 COLOR_PAYLINE_HOVER = "#ffe770"
-COLOR_PAYLINE_GLOW = "#8a6d1f"
+COLOR_PAYLINE_GLOW = "#f2c94c"    # halo exterior dorado brillante, solo visible al ganar
 COLOR_METAL_CLARO = "#3f5c4a"
 COLOR_METAL_MEDIO = "#25392d"
 COLOR_SOMBRA = "#000000"
-COLOR_FILA_OSCURA = "#000000"     # overlay (con stipple) para atenuar filas fuera de la payline
 
 # Botón "GIRAR": metálico dorado/ámbar en vez del verde neón, más acorde
 # con el resto de la paleta dorada de la interfaz.
@@ -395,7 +394,6 @@ class RenderizadorTragamonedas:
         "cabinet",
         "ventana_rodillo",
         "simbolo",
-        "fila_oscura",
         "payline",
         "flecha",
         "glow",
@@ -463,28 +461,20 @@ class RenderizadorTragamonedas:
             ]
             self._ids_simbolos.append(ids_slots)
 
-            # Filas fuera de la línea de pago (arriba/abajo): se atenúan
-            # levemente con un overlay semitransparente (stipple), para que
-            # la fila central resalte más por contraste.
-            self.canvas.create_rectangle(
-                x, y, x + ancho, y + alto,
-                fill=COLOR_FILA_OSCURA, outline="", stipple="gray25",
-                tags=("fila_oscura",),
-            )
-            self.canvas.create_rectangle(
-                x, y + alto * 2, x + ancho, y + alto * 3,
-                fill=COLOR_FILA_OSCURA, outline="", stipple="gray25",
-                tags=("fila_oscura",),
-            )
-
-            # Línea de pago (fila central): marco dorado encendido.
+            # Marco de "fruta ganadora" (halo + borde dorado) por rodillo:
+            # oculto por defecto. Solo se hace visible al ganar, mediante
+            # mostrar_marco_ganador()/ocultar_marco_ganador(). Nada se
+            # dibuja aquí encima de las frutas mientras se juega o en
+            # reposo: los tres rodillos se ven iguales entre sí.
             id_glow = self.canvas.create_rectangle(
                 x, y + alto, x + ancho, y + alto * 2,
-                outline=COLOR_PAYLINE_GLOW, width=6, tags=("glow",),
+                outline=COLOR_PAYLINE_GLOW, width=6,
+                outlinestipple="gray50", state="hidden", tags=("glow",),
             )
             id_payline = self.canvas.create_rectangle(
                 x, y + alto, x + ancho, y + alto * 2,
-                outline=COLOR_PAYLINE, width=4, tags=("payline",),
+                outline=COLOR_PAYLINE, width=2, state="hidden",
+                tags=("payline",),
             )
             self._ids_glow.append(id_glow)
             self._ids_payline.append(id_payline)
@@ -509,6 +499,19 @@ class RenderizadorTragamonedas:
         )
 
         self._elevar_capas()
+
+    def mostrar_marco_ganador(self) -> None:
+        """Revela el halo + borde dorado sobre la fila central. Solo se
+        llama cuando el giro terminó en una combinación ganadora."""
+        self.canvas.itemconfigure("glow", state="normal")
+        self.canvas.itemconfigure("payline", state="normal")
+        self._elevar_capas()
+
+    def ocultar_marco_ganador(self) -> None:
+        """Esconde el halo + borde dorado: estado por defecto mientras se
+        juega o en reposo, para que los tres rodillos luzcan iguales."""
+        self.canvas.itemconfigure("glow", state="hidden")
+        self.canvas.itemconfigure("payline", state="hidden")
 
     def _elevar_capas(self) -> None:
         for capa in self.ORDEN_CAPAS:
@@ -566,6 +569,14 @@ class vistaTragamonedas(tk.Frame):
         self.jugador = jugador
         self._controlador = ControladorTragamonedas(jugador)
 
+        # Título nativo de la ventana: la raíz (tk.Tk) es compartida con
+        # menu_principal.py, así que se actualiza aquí para reflejar el
+        # nuevo nombre del juego mientras esta vista está activa.
+        try:
+            self.master.title("NOVATIC ROYALE - Tragamonedas")
+        except tk.TclError:
+            pass
+
         self._var_apuesta: tk.IntVar | None = None
         self._var_creditos: tk.StringVar | None = None
         self._var_ultimo_premio: tk.StringVar | None = None
@@ -582,6 +593,13 @@ class vistaTragamonedas(tk.Frame):
         self._simbolos_finales: tuple | None = None
         self._mensaje_pendiente: str | None = None
         self._rodillos_terminados: set[int] = set()
+
+        # Banner de victoria: pequeño overlay temporal (no un Toplevel),
+        # oculto por defecto; se muestra 1.5s al ganar y se puede ocultar
+        # antes de tiempo si el jugador vuelve a presionar GIRAR.
+        self._banner_victoria: tk.Frame | None = None
+        self._lbl_banner_victoria: tk.Label | None = None
+        self._banner_after_id: str | None = None
 
         self.pack(fill="both", expand=True)
 
@@ -641,7 +659,7 @@ class vistaTragamonedas(tk.Frame):
         self._var_apuesta = tk.IntVar(value=APUESTA_MINIMA)
 
         tk.Label(
-            interior, text="✦ R O B A S I N O ✦",
+            interior, text="✦ N O V A T I C   R O Y A L E ✦",
             font=("Helvetica", 30, "bold"), fg=COLOR_PAYLINE, bg=COLOR_PANEL,
         ).grid(row=0, column=0, sticky="s")
 
@@ -758,6 +776,20 @@ class vistaTragamonedas(tk.Frame):
         self._canvas_maestro = tk.Canvas(hueco, bg=COLOR_RODILLO_BG, highlightthickness=0)
         self._canvas_maestro.pack(padx=20, pady=20)
         self._renderizador = RenderizadorTragamonedas(self._canvas_maestro)
+
+        # Banner de victoria: pequeño overlay dorado sobre el gabinete,
+        # flotando con place() (no un Toplevel) para poder ocultarlo al
+        # instante sin depender de fundidos ni ventanas aparte. Arranca
+        # sin colocar (oculto).
+        self._banner_victoria = tk.Frame(
+            hueco, bg=COLOR_PANEL, highlightbackground=COLOR_PAYLINE,
+            highlightthickness=2,
+        )
+        self._lbl_banner_victoria = tk.Label(
+            self._banner_victoria, text="", font=("Helvetica", 14, "bold"),
+            fg=COLOR_PAYLINE, bg=COLOR_PANEL, padx=16, pady=6,
+        )
+        self._lbl_banner_victoria.pack()
 
         # Se escucha el resize de la ventana raíz (mismo patrón que
         # dados.py), no el de este Frame: así se recalcula el layout de
@@ -907,7 +939,7 @@ class vistaTragamonedas(tk.Frame):
         self._crear_indicador(marco_info, "APUESTA", self._var_apuesta, COLOR_PAYLINE).grid(
             row=0, column=1, sticky="nsew", padx=8,
         )
-        self._crear_indicador(marco_info, "ULTIMO GANADO", self._var_ultimo_premio, COLOR_GANANCIA).grid(
+        self._crear_indicador(marco_info, "ULTIMO GANADO", self._var_ultimo_premio, COLOR_PAYLINE).grid(
             row=0, column=2, sticky="nsew", padx=8,
         )
 
@@ -975,6 +1007,9 @@ class vistaTragamonedas(tk.Frame):
         if self._fondo_resize_after_id is not None:
             self.master.after_cancel(self._fondo_resize_after_id)
             self._fondo_resize_after_id = None
+        if self._banner_after_id is not None:
+            self.after_cancel(self._banner_after_id)
+            self._banner_after_id = None
         self.master.unbind("<Configure>", self._id_bind_configure)
 
         self.destroy()
@@ -1005,6 +1040,12 @@ class vistaTragamonedas(tk.Frame):
         self._mensaje_pendiente = None
         self._premio_pendiente = 0
         self._rodillos_terminados.clear()
+
+        # Reset inmediato: si el banner de "¡GANASTE!" y el marco dorado de
+        # la ronda anterior seguían visibles (el jugador presionó GIRAR
+        # antes de que se ocultaran solos a los 1.5s), se esconden ya
+        # mismo para dar paso a la nueva animación.
+        self._ocultar_indicadores_victoria()
 
         # La apuesta ya se descontó de verdad en validar_apuesta() (arriba).
         # Se refleja aquí de inmediato para que el jugador vea el descuento
@@ -1088,57 +1129,36 @@ class vistaTragamonedas(tk.Frame):
         self.btn_volver.set_estado(True)
 
         if gano:
-            self._mostrar_popup_ganancia(premio)
+            self._mostrar_indicadores_victoria(premio)
+        else:
+            # Por las dudas: en una ronda perdida no debe quedar visible
+            # ni el marco dorado ni el banner de una ronda anterior.
+            self._ocultar_indicadores_victoria()
 
-    def _mostrar_popup_ganancia(self, premio: int) -> None:
-        ventana_raiz = self.winfo_toplevel()
-        popup = tk.Toplevel(ventana_raiz)
-        popup.overrideredirect(True)
-        popup.transient(ventana_raiz)
-        popup.configure(bg=COLOR_PAYLINE)
+    def _mostrar_indicadores_victoria(self, premio: int) -> None:
+        """Muestra el marco dorado de la fila ganadora junto con un banner
+        pequeño y elegante que se oculta solo a los 1.5s."""
+        self._renderizador.mostrar_marco_ganador()
 
-        marco = tk.Frame(
-            popup, bg=COLOR_PANEL, highlightbackground=COLOR_PAYLINE, highlightthickness=4,
-        )
-        marco.pack(padx=3, pady=3)
+        self._lbl_banner_victoria.config(text=f"✦ ¡GANASTE! +{premio} ✦")
+        self._banner_victoria.place(relx=0.5, rely=0.06, anchor="n")
+        self._banner_victoria.lift()
 
-        tk.Label(
-            marco, text="TÚ GANASTE!", font=("Helvetica", 26, "bold"),
-            fg=COLOR_PAYLINE, bg=COLOR_PANEL,
-        ).pack(padx=60, pady=(32, 6))
-        tk.Label(
-            marco, text=f"+{premio} Creditos", font=("Helvetica", 28, "bold"),
-            fg=COLOR_GANANCIA, bg=COLOR_PANEL,
-        ).pack(padx=60, pady=(0, 32))
+        if self._banner_after_id is not None:
+            self.after_cancel(self._banner_after_id)
+        self._banner_after_id = self.after(1500, self._ocultar_indicadores_victoria)
 
-        popup.update_idletasks()
-        ref = self._gabinete_contenedor
-        x = ref.winfo_rootx() + (ref.winfo_width() - popup.winfo_width()) // 2
-        y = ref.winfo_rooty() + (ref.winfo_height() - popup.winfo_height()) // 2
-        popup.geometry(f"+{max(0, x)}+{max(0, y)}")
-
-        try:
-            popup.attributes("-alpha", 0.0)
-            self._desvanecer_entrada(popup, 0.0)
-        except tk.TclError:
-            pass
-
-        self.after(2500, lambda p=popup: self._cerrar_popup(p))
-
-    def _desvanecer_entrada(self, popup: tk.Toplevel, alpha: float) -> None:
-        if not popup.winfo_exists():
-            return
-        alpha = min(1.0, alpha + 0.15)
-        try:
-            popup.attributes("-alpha", alpha)
-        except tk.TclError:
-            return
-        if alpha < 1.0:
-            popup.after(20, self._desvanecer_entrada, popup, alpha)
-
-    def _cerrar_popup(self, popup: tk.Toplevel) -> None:
-        if popup.winfo_exists():
-            popup.destroy()
+    def _ocultar_indicadores_victoria(self) -> None:
+        """Esconde el banner y el marco dorado. Se llama automáticamente
+        a los 1.5s, y también de inmediato si el jugador vuelve a
+        presionar GIRAR antes de que ese tiempo se cumpla."""
+        if self._banner_after_id is not None:
+            self.after_cancel(self._banner_after_id)
+            self._banner_after_id = None
+        if self._banner_victoria is not None:
+            self._banner_victoria.place_forget()
+        if self._renderizador is not None:
+            self._renderizador.ocultar_marco_ganador()
 
     def jugar(self, monto: int) -> dict:
         return self._controlador.jugar(monto)

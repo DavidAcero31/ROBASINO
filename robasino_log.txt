@@ -438,3 +438,114 @@
 [Tragamonedas] Rodillos=('estrella', 'cereza', 'cereza')  Apuesta=10  Premio=0  Saldo=1950
 [Tragamonedas] Rodillos=('estrella', 'estrella', 'limon')  Apuesta=10  Premio=0  Saldo=1940
 [Tragamonedas] Rodillos=('estrella', 'cereza', 'cereza')  Apuesta=10  Premio=0  Saldo=1990
+[Dados] Dados={'dado1': 1, 'dado2': 3, 'suma': 4}  Apuesta=10  Premio=0  Estado=punto_establecido  Saldo=1990
+[Dados] Dados={'dado1': 2, 'dado2': 1, 'suma': 3}  Apuesta=10  Premio=0  Estado=punto_establecido  Saldo=1990
+[Dados] Dados={'dado1': 3, 'dado2': 1, 'suma': 4}  Apuesta=10  Premio=20  Estado=ganada  Saldo=2010
+[Dados] Dados={'dado1': 6, 'dado2': 2, 'suma': 8}  Apuesta=10  Premio=0  Estado=punto_establecido  Saldo=2000
+[Dados] Dados={'dado1': 6, 'dado2': 3, 'suma': 9}  Apuesta=10  Premio=0  Estado=punto_establecido  Saldo=2000
+[Dados] Dados={'dado1': 2, 'dado2': 6, 'suma': 8}  Apuesta=10  Premio=20  Estado=ganada  Saldo=2020
+[Dados] Dados={'dado1': 6, 'dado2': 1, 'suma': 7}  Apuesta=10  Premio=20  Estado=ganada  Saldo=2010
+[Dados] Dados={'dado1': 1, 'dado2': 2, 'suma': 3}  Apuesta=10  Premio=0  Estado=perdida  Saldo=2000
+[Dados] Dados={'dado1': 2, 'dado2': 2, 'suma': 4}  Apuesta=10  Premio=0  Estado=punto_establecido  Saldo=1990
+[Dados] Dados={'dado1': 6, 'dado2': 6, 'suma': 12}  Apuesta=10  Premio=0  Estado=punto_establecido  Saldo=1990
+[Dados] Dados={'dado1': 5, 'dado2': 1, 'suma': 6}  Apuesta=10  Premio=0  Estado=punto_establecido  Saldo=1990
+[Dados] Dados={'dado1': 1, 'dado2': 5, 'suma': 6}  Apuesta=10  Premio=0  Estado=punto_establecido  Saldo=1990
+[Dados] Dados={'dado1': 1, 'dado2': 4, 'suma': 5}  Apuesta=10  Premio=0  Estado=punto_establecido  Saldo=1990
+[Dados] Dados={'dado1': 1, 'dado2': 3, 'suma': 4}  Apuesta=10  Premio=20  Estado=ganada  Saldo=2010
+[Dados] Dados={'dado1': 6, 'dado2': 6, 'suma': 12}  Apuesta=10  Premio=0  Estado=perdida  Saldo=2000
+[Dados] Dados={'dado1': 2, 'dado2': 5, 'suma': 7}  Apuesta=10  Premio=20  Estado=ganada  Saldo=2010
+[Dados] Dados={'dado1': 1, 'dado2': 5, 'suma': 6}  Apuesta=10  Premio=0  Estado=punto_establecido  Saldo=2000
+[Dados] Dados={'dado1': 4, 'dado2': 6, 'suma': 10}  Apuesta=10  Premio=0  Estado=punto_establecido  Saldo=2000
+[Dados] Dados={'dado1': 1, 'dado2': 4, 'suma': 5}  Apuesta=10  Premio=0  Estado=punto_establecido  Saldo=2000
+[Dados] Dados={'dado1': 2, 'dado2': 4, 'suma': 6}  Apuesta=10  Premio=20  Estado=ganada  Saldo=2020
+[Dados] Dados={'dado1': 6, 'dado2': 1, 'suma': 7}  Apuesta=10  Premio=20  Estado=ganada  Saldo=2030
+[Dados] Dados={'dado1': 1, 'dado2': 3, 'suma': 4}  Apuesta=10  Premio=0  Estado=punto_establecido  Saldo=2020
+[Dados] Dados={'dado1': 4, 'dado2': 5, 'suma': 9}  Apuesta=10  Premio=0  Estado=punto_establecido  Saldo=1990
+[Dados] Dados={'dado1': 1, 'dado2': 1, 'suma': 2}  Apuesta=10  Premio=0  Estado=punto_establecido  Saldo=1990
+[Dados] Dados={'dado1': 3, 'dado2': 5, 'suma': 8}  Apuesta=10  Premio=0  Estado=punto_establecido  Saldo=1990
+[Dados] Dados={'dado1': 6, 'dado2': 5, 'suma': 11}  Apuesta=10  Premio=0  Estado=punto_establecido  Saldo=1990
+[Dados] Dados={'dado1': 1, 'dado2': 2, 'suma': 3}  Apuesta=10  Premio=0  Estado=punto_establecido  Saldo=1990
+[Dados] Dados={'dado1': 2, 'dado2': 1, 'suma': 3}  Apuesta=10  Premio=0  Estado=punto_establecido  Saldo=1990
+[Dados] Dados={'dado1': 4, 'dado2': 6, 'suma': 10}  Apuesta=10  Premio=0  Estado=punto_establecido  Saldo=1990
+[Dados] Dados={'dado1': 1, 'dado2': 5, 'suma': 6}  Apuesta=10  Premio=0  Estado=punto_establecido  Saldo=1990
+[Dados] Dados={'dado1': 2, 'dado2': 4, 'suma': 6}  Apuesta=10  Premio=0  Estado=punto_establecido  Saldo=1990
+[Dados] Dados={'dado1': 2, 'dado2': 5, 'suma': 7}  Apuesta=10  Premio=0  Estado=perdida  Saldo=1990
+[Dados] Dados={'dado1': 6, 'dado2': 2, 'suma': 8}  Apuesta=10  Premio=0  Estado=punto_establecido  Saldo=1980
+[Dados] Dados={'dado1': 4, 'dado2': 5, 'suma': 9}  Apuesta=10  Premio=0  Estado=punto_establecido  Saldo=1980
+[Dados] Dados={'dado1': 3, 'dado2': 1, 'suma': 4}  Apuesta=10  Premio=0  Estado=punto_establecido  Saldo=1980
+[Dados] Dados={'dado1': 3, 'dado2': 6, 'suma': 9}  Apuesta=10  Premio=0  Estado=punto_establecido  Saldo=1980
+[Dados] Dados={'dado1': 5, 'dado2': 2, 'suma': 7}  Apuesta=10  Premio=0  Estado=perdida  Saldo=1980
+[Dados] Dados={'dado1': 6, 'dado2': 6, 'suma': 12}  Apuesta=10  Premio=0  Estado=perdida  Saldo=1970
+[Dados] Dados={'dado1': 5, 'dado2': 1, 'suma': 6}  Apuesta=10  Premio=0  Estado=punto_establecido  Saldo=1960
+[Dados] Dados={'dado1': 2, 'dado2': 2, 'suma': 4}  Apuesta=10  Premio=0  Estado=punto_establecido  Saldo=1960
+[Dados] Dados={'dado1': 3, 'dado2': 4, 'suma': 7}  Apuesta=10  Premio=0  Estado=perdida  Saldo=1960
+[Dados] Dados={'dado1': 5, 'dado2': 6, 'suma': 11}  Apuesta=10  Premio=20  Estado=ganada  Saldo=1970
+[Dados] Dados={'dado1': 4, 'dado2': 6, 'suma': 10}  Apuesta=10  Premio=0  Estado=punto_establecido  Saldo=1960
+[Dados] Dados={'dado1': 2, 'dado2': 3, 'suma': 5}  Apuesta=10  Premio=0  Estado=punto_establecido  Saldo=1960
+[Dados] Dados={'dado1': 1, 'dado2': 1, 'suma': 2}  Apuesta=10  Premio=0  Estado=punto_establecido  Saldo=1960
+[Dados] Dados={'dado1': 5, 'dado2': 1, 'suma': 6}  Apuesta=10  Premio=0  Estado=punto_establecido  Saldo=1960
+[Dados] Dados={'dado1': 4, 'dado2': 3, 'suma': 7}  Apuesta=10  Premio=0  Estado=perdida  Saldo=1960
+[Dados] Dados={'dado1': 5, 'dado2': 2, 'suma': 7}  Apuesta=10  Premio=20  Estado=ganada  Saldo=1970
+[Dados] Dados={'dado1': 3, 'dado2': 3, 'suma': 6}  Apuesta=10  Premio=0  Estado=punto_establecido  Saldo=1960
+[Dados] Dados={'dado1': 4, 'dado2': 3, 'suma': 7}  Apuesta=10  Premio=0  Estado=perdida  Saldo=1960
+[Dados] Dados={'dado1': 2, 'dado2': 1, 'suma': 3}  Apuesta=10  Premio=0  Estado=perdida  Saldo=1950
+[Dados] Dados={'dado1': 3, 'dado2': 4, 'suma': 7}  Apuesta=10  Premio=20  Estado=ganada  Saldo=1960
+[Dados] Dados={'dado1': 1, 'dado2': 3, 'suma': 4}  Apuesta=10  Premio=0  Estado=punto_establecido  Saldo=1950
+[Dados] Dados={'dado1': 2, 'dado2': 2, 'suma': 4}  Apuesta=10  Premio=20  Estado=ganada  Saldo=1970
+[Dados] Dados={'dado1': 4, 'dado2': 4, 'suma': 8}  Apuesta=10  Premio=0  Estado=punto_establecido  Saldo=1960
+[Dados] Dados={'dado1': 4, 'dado2': 6, 'suma': 10}  Apuesta=10  Premio=0  Estado=punto_establecido  Saldo=1960
+[Dados] Dados={'dado1': 2, 'dado2': 4, 'suma': 6}  Apuesta=10  Premio=0  Estado=punto_establecido  Saldo=1960
+[Dados] Dados={'dado1': 2, 'dado2': 1, 'suma': 3}  Apuesta=10  Premio=0  Estado=punto_establecido  Saldo=1960
+[Dados] Dados={'dado1': 2, 'dado2': 3, 'suma': 5}  Apuesta=10  Premio=0  Estado=punto_establecido  Saldo=1960
+[Dados] Dados={'dado1': 4, 'dado2': 4, 'suma': 8}  Apuesta=10  Premio=20  Estado=ganada  Saldo=1980
+[Dados] Dados={'dado1': 1, 'dado2': 2, 'suma': 3}  Apuesta=10  Premio=0  Estado=perdida  Saldo=1970
+[Dados] Dados={'dado1': 6, 'dado2': 5, 'suma': 11}  Apuesta=10  Premio=20  Estado=ganada  Saldo=1980
+[Dados] Dados={'dado1': 1, 'dado2': 4, 'suma': 5}  Apuesta=10  Premio=0  Estado=punto_establecido  Saldo=1970
+[Dados] Dados={'dado1': 3, 'dado2': 5, 'suma': 8}  Apuesta=10  Premio=0  Estado=punto_establecido  Saldo=1970
+[Dados] Dados={'dado1': 2, 'dado2': 5, 'suma': 7}  Apuesta=10  Premio=0  Estado=perdida  Saldo=1970
+[Tragamonedas] Rodillos=('estrella', 'campana', 'diamante')  Apuesta=10  Premio=0  Saldo=1990
+[Tragamonedas] Rodillos=('estrella', 'limon', 'cereza')  Apuesta=10  Premio=0  Saldo=1980
+[Tragamonedas] Rodillos=('estrella', 'limon', 'limon')  Apuesta=10  Premio=0  Saldo=1970
+[Tragamonedas] Rodillos=('cereza', 'limon', 'limon')  Apuesta=10  Premio=0  Saldo=1960
+[Tragamonedas] Rodillos=('limon', 'limon', 'limon')  Apuesta=10  Premio=30  Saldo=1980
+[Tragamonedas] Rodillos=('estrella', 'limon', 'cereza')  Apuesta=10  Premio=0  Saldo=1970
+[Tragamonedas] Rodillos=('comodin', 'comodin', 'comodin')  Apuesta=10  Premio=20  Saldo=1980
+[Tragamonedas] Rodillos=('comodin', 'comodin', 'comodin')  Apuesta=10  Premio=20  Saldo=1990
+[Tragamonedas] Rodillos=('estrella', 'limon', 'cereza')  Apuesta=10  Premio=0  Saldo=1980
+[Tragamonedas] Rodillos=('campana', 'campana', 'limon')  Apuesta=10  Premio=0  Saldo=1970
+[Tragamonedas] Rodillos=('cereza', 'limon', 'cereza')  Apuesta=10  Premio=0  Saldo=1990
+[Tragamonedas] Rodillos=('estrella', 'campana', 'comodin')  Apuesta=10  Premio=0  Saldo=1980
+[Tragamonedas] Rodillos=('comodin', 'comodin', 'comodin')  Apuesta=10  Premio=20  Saldo=1990
+[Tragamonedas] Rodillos=('limon', 'limon', 'limon')  Apuesta=10  Premio=30  Saldo=2010
+[Tragamonedas] Rodillos=('comodin', 'diamante', 'campana')  Apuesta=10  Premio=0  Saldo=2000
+[Tragamonedas] Rodillos=('campana', 'cereza', 'estrella')  Apuesta=10  Premio=0  Saldo=1990
+[Tragamonedas] Rodillos=('campana', 'cereza', 'cereza')  Apuesta=10  Premio=0  Saldo=1980
+[Tragamonedas] Rodillos=('campana', 'campana', 'estrella')  Apuesta=10  Premio=0  Saldo=1970
+[Tragamonedas] Rodillos=('cereza', 'limon', 'campana')  Apuesta=10  Premio=0  Saldo=1960
+[Tragamonedas] Rodillos=('comodin', 'comodin', 'comodin')  Apuesta=10  Premio=20  Saldo=1970
+[Tragamonedas] Rodillos=('cereza', 'campana', 'diamante')  Apuesta=10  Premio=0  Saldo=1960
+[Tragamonedas] Rodillos=('comodin', 'campana', 'campana')  Apuesta=10  Premio=0  Saldo=1950
+[Tragamonedas] Rodillos=('cereza', 'cereza', 'limon')  Apuesta=10  Premio=0  Saldo=1940
+[Tragamonedas] Rodillos=('estrella', 'limon', 'cereza')  Apuesta=10  Premio=0  Saldo=1930
+[Tragamonedas] Rodillos=('cereza', 'cereza', 'cereza')  Apuesta=10  Premio=50  Saldo=1970
+[Tragamonedas] Rodillos=('comodin', 'comodin', 'comodin')  Apuesta=10  Premio=20  Saldo=1980
+[Tragamonedas] Rodillos=('comodin', 'comodin', 'comodin')  Apuesta=10  Premio=20  Saldo=1990
+[Tragamonedas] Rodillos=('limon', 'limon', 'limon')  Apuesta=10  Premio=30  Saldo=2010
+[Tragamonedas] Rodillos=('limon', 'campana', 'cereza')  Apuesta=10  Premio=0  Saldo=2000
+[Tragamonedas] Rodillos=('estrella', 'cereza', 'limon')  Apuesta=10  Premio=0  Saldo=1990
+[Tragamonedas] Rodillos=('limon', 'limon', 'limon')  Apuesta=10  Premio=30  Saldo=2010
+[Dados] Dados={'dado1': 6, 'dado2': 3, 'suma': 9}  Apuesta=10  Premio=0  Estado=punto_establecido  Saldo=1990
+[Tragamonedas] Rodillos=('comodin', 'cereza', 'estrella')  Apuesta=10  Premio=0  Saldo=1990
+[Tragamonedas] Rodillos=('cereza', 'comodin', 'limon')  Apuesta=10  Premio=0  Saldo=1980
+[Tragamonedas] Rodillos=('comodin', 'comodin', 'comodin')  Apuesta=10  Premio=20  Saldo=1990
+[Tragamonedas] Rodillos=('comodin', 'comodin', 'comodin')  Apuesta=10  Premio=20  Saldo=2000
+[Tragamonedas] Rodillos=('estrella', 'cereza', 'comodin')  Apuesta=10  Premio=0  Saldo=1990
+[Tragamonedas] Rodillos=('limon', 'estrella', 'comodin')  Apuesta=10  Premio=0  Saldo=1980
+[Tragamonedas] Rodillos=('limon', 'campana', 'campana')  Apuesta=10  Premio=0  Saldo=1970
+[Tragamonedas] Rodillos=('limon', 'limon', 'limon')  Apuesta=10  Premio=30  Saldo=1990
+[Tragamonedas] Rodillos=('comodin', 'comodin', 'comodin')  Apuesta=10  Premio=20  Saldo=2000
+[Tragamonedas] Rodillos=('cereza', 'limon', 'cereza')  Apuesta=10  Premio=0  Saldo=1990
+[Dados] Dados={'dado1': 1, 'dado2': 3, 'suma': 4}  Apuesta=10  Premio=0  Estado=punto_establecido  Saldo=1990
+[Dados] Dados={'dado1': 2, 'dado2': 3, 'suma': 5}  Apuesta=10  Premio=0  Estado=punto_establecido  Saldo=1990
+[Dados] Dados={'dado1': 4, 'dado2': 6, 'suma': 10}  Apuesta=10  Premio=0  Estado=punto_establecido  Saldo=1990
+[Dados] Dados={'dado1': 3, 'dado2': 4, 'suma': 7}  Apuesta=10  Premio=0  Estado=perdida  Saldo=1990

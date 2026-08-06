@@ -20,6 +20,7 @@ from controladores.controlador_dados import ControladorDados
 # ----------------------------------------------------------------------
 BG_DARK = "#07140e"       # contenedores principales: casi negro-verde
 BG_PANEL = "#081a12"      # variante sutil para paneles internos
+CAJA_DADOS_BG = "#040a07" # fondo aún más oscuro: "hundido" para la cajita de los dados
 BORDER = "#c5a059"        # borde dorado suave ("incrustación metálica")
 BORDER_SOFT = "#8a7336"   # dorado apagado, para bordes secundarios
 GOLD = "#f0c04a"
@@ -220,16 +221,17 @@ class VisorApuesta(tk.Canvas):
 class PlacaEstado(tk.Canvas):
     """Tarjeta dedicada para el estado de la ronda, justo debajo de los
     dados: cambia de color según si la ronda fue ganada, perdida o si
-    hay un punto establecido."""
+    hay un punto establecido. En los tres casos "decididos" usa un
+    fondo sólido del color correspondiente para que sea más visible
+    (una placa, no solo un texto de color)."""
 
     COLORES = {
         "ganada": VERDE_GANADA,
         "perdida": ROJO_PERDIDA,
         "punto": AMARILLO_PUNTO,
-        "neutral": GOLD_MUTED,
     }
 
-    def __init__(self, master, ancho=230, alto=38, radio=10,
+    def __init__(self, master, ancho=230, alto=50, radio=10,
                  fuente=("Arial", 13, "bold")):
         super().__init__(master, width=ancho, height=alto,
                           bg=master["bg"], highlightthickness=0, bd=0)
@@ -243,12 +245,18 @@ class PlacaEstado(tk.Canvas):
         )
 
     def set_estado(self, texto: str, tipo: str = "neutral") -> None:
-        color = self.COLORES.get(tipo, GOLD_MUTED)
-        # Placa oscura con acento de color en el borde y el texto (en vez
-        # de un bloque sólido) para que siga integrada con el resto de la
-        # interfaz sobre el fieltro.
-        self.itemconfig(self._fondo, outline=color, fill=BG_DARK)
-        self.itemconfig(self._texto, text=texto, fill=color)
+        if tipo in self.COLORES:
+            # Estado decidido (ganada/perdida) o punto establecido: placa
+            # con fondo sólido del color correspondiente, bien destacada,
+            # con texto oscuro para máximo contraste.
+            color = self.COLORES[tipo]
+            self.itemconfig(self._fondo, outline=color, fill=color)
+            self.itemconfig(self._texto, text=texto, fill=BG_DARK)
+        else:
+            # Estado neutro (aún no hay resultado): placa oscura discreta,
+            # integrada con el resto de la interfaz sobre el fieltro.
+            self.itemconfig(self._fondo, outline=GOLD_MUTED, fill=BG_DARK)
+            self.itemconfig(self._texto, text=texto, fill=GOLD_MUTED)
 
 
 class Dados(tk.Frame):
@@ -313,7 +321,7 @@ class Dados(tk.Frame):
         interno.pack(fill="x", padx=6, pady=6)
 
         tk.Label(
-            interno, text="✦ R O B A S I N O ✦", bg=BG_PANEL, fg=GOLD,
+            interno, text="✦ N O V A T I C   R O Y A L E ✦", bg=BG_PANEL, fg=GOLD,
             font=("Arial", 22, "bold")
         ).pack(pady=(10, 0))
         tk.Label(
@@ -378,27 +386,27 @@ class Dados(tk.Frame):
     # ------------------------------------------------------------------
 
     def _construir_panel_dados(self) -> None:
-        externo = tk.Frame(self, bg=BG_DARK, highlightbackground=BORDER,
+        # Se retiran los marcos intermedios que antes envolvían la caja de
+        # dados (dejaban ver su propio color de fondo como un halo verdoso
+        # alrededor de la cajita oscura). Ahora la caja de dados se apoya
+        # directamente sobre el Canvas de fieltro: solo se centra en la
+        # vista (expand=True sin fill), así la textura del fondo queda
+        # completamente limpia y visible alrededor de ella.
+        # Cajita de los dados: fondo aún más oscuro que el resto, para dar
+        # sensación de hueco "hundido" en la mesa.
+        interno = tk.Frame(self, bg=CAJA_DADOS_BG, highlightbackground=BORDER,
                             highlightthickness=1)
-        externo.pack(fill="both", expand=True, padx=15, pady=10)
+        interno.pack(expand=True, padx=15, pady=10)
 
-        medio = tk.Frame(externo, bg=BG_PANEL, highlightbackground=BORDER_SOFT,
-                          highlightthickness=1)
-        medio.pack(fill="both", expand=True, padx=8, pady=8)
-
-        interno = tk.Frame(medio, bg=BG_DARK, highlightbackground=BORDER_SOFT,
-                            highlightthickness=1)
-        interno.pack(padx=20, pady=20)
-
-        fila_dados = tk.Frame(interno, bg=BG_DARK)
+        fila_dados = tk.Frame(interno, bg=CAJA_DADOS_BG)
         fila_dados.pack(padx=30, pady=30)
 
         self.canvas_dado1 = tk.Canvas(fila_dados, width=CANVAS_ANCHO, height=CANVAS_ALTO,
-                                       bg=BG_DARK, highlightthickness=0, bd=0)
+                                       bg=CAJA_DADOS_BG, highlightthickness=0, bd=0)
         self.canvas_dado1.pack(side="left", padx=15)
 
         self.canvas_dado2 = tk.Canvas(fila_dados, width=CANVAS_ANCHO, height=CANVAS_ALTO,
-                                       bg=BG_DARK, highlightthickness=0, bd=0)
+                                       bg=CAJA_DADOS_BG, highlightthickness=0, bd=0)
         self.canvas_dado2.pack(side="left", padx=15)
 
         self._dibujar_dado(self.canvas_dado1, 1)
@@ -406,7 +414,7 @@ class Dados(tk.Frame):
 
         # Placa de estado: tarjeta dedicada justo debajo de los dados que
         # cambia de color según gane/pierda la ronda o se marque un punto.
-        self.placa_estado = PlacaEstado(medio)
+        self.placa_estado = PlacaEstado(interno)
         self.placa_estado.pack(pady=(0, 12))
 
     # ------------------------------------------------------------------
@@ -656,6 +664,11 @@ class Dados(tk.Frame):
         )
         self.btn_accion.pack(side="right")
 
+        # La etiqueta APUESTA arranca sincronizada con el valor por
+        # defecto del selector (en vez de quedar en "-" hasta el primer
+        # lanzamiento).
+        self.lbl_valor_apuesta.config(text=str(self._apuesta_seleccionada))
+
     def _crear_estadistica(self, padre, texto_etiqueta, nombre_attr) -> None:
         col = tk.Frame(padre, bg=BG_PANEL, highlightbackground=BORDER_SOFT,
                         highlightthickness=1)
@@ -707,6 +720,9 @@ class Dados(tk.Frame):
             APUESTA_MIN, min(APUESTA_MAX, self._apuesta_seleccionada + delta)
         )
         self.visor_apuesta.set_valor(str(self._apuesta_seleccionada))
+        # Mantiene la etiqueta APUESTA del panel inferior siempre
+        # sincronizada con el selector, no solo al confirmar el lanzamiento.
+        self.lbl_valor_apuesta.config(text=str(self._apuesta_seleccionada))
 
     def _al_presionar_accion(self) -> None:
         if self._animando:
@@ -743,7 +759,6 @@ class Dados(tk.Frame):
             if not ronda_activa:
                 self.btn_apuesta_menos.set_estado(True)
                 self.btn_apuesta_mas.set_estado(True)
-                messagebox.showinfo("Resultado", mensaje)
 
         if resultado is not None:
             self._animar_dados(resultado, finalizar)
@@ -781,7 +796,7 @@ if __name__ == "__main__":
     from vistas.casino_com import Jugador
 
     root = tk.Tk()
-    root.title("ROBASINO - Craps")
+    root.title("NOVATIC ROYALE - Craps")
     root.geometry(f"{ANCHO_REF}x{ALTO_REF}")
 
     # Ventana normal: se puede maximizar/achicar como cualquier app de
