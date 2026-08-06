@@ -415,6 +415,7 @@ class vistaTragamonedas(JuegoBase):
 
         self._simbolos_finales: tuple | None = None
         self._mensaje_pendiente: str | None = None
+        self._rodillos_terminados: set[int] = set()
 
         self._construir_ventana()
 
@@ -663,6 +664,12 @@ class vistaTragamonedas(JuegoBase):
         self._simbolos_finales = None
         self._mensaje_pendiente = None
         self._premio_pendiente = 0
+        self._rodillos_terminados.clear()
+
+        # La apuesta ya se descontó de verdad en validar_apuesta() (arriba).
+        # Se refleja aquí de inmediato para que el jugador vea el descuento
+        # al instante, en vez de esperar a que termine la animación.
+        self._var_creditos.set(str(self.jugador.creditos))
 
         for rodillo in self._rodillos:
             rodillo.iniciar_giro()
@@ -679,8 +686,47 @@ class vistaTragamonedas(JuegoBase):
         self._renderizador.actualizar_rodillo(rodillo)
         if sigue:
             self._ventana.after(INTERVALO_ANIMACION_MS, self._programar_tick, rodillo)
-        elif rodillo.indice == len(self._rodillos) - 1:
+            return
+
+        # Este rodillo ya terminó de animarse. No asumimos que el índice
+        # más alto siempre es el último en frenar: esperamos a que TODOS
+        # los rodillos hayan terminado antes de mostrar el resultado, así
+        # el indicador de créditos nunca se queda desactualizado aunque
+        # cambie el orden en que frenan.
+        self._rodillos_terminados.add(rodillo.indice)
+        if len(self._rodillos_terminados) == len(self._rodillos):
+            self._verificar_payline()
             self._finalizar_giro(self._mensaje_pendiente)
+
+    def _verificar_payline(self) -> None:
+        """Garantiza que el símbolo mostrado en la línea de pago (fila del
+        medio) de cada rodillo coincida exactamente con resultado_final.
+
+        La animación normalmente ya deja cada rodillo en el símbolo
+        correcto, pero esto actúa como red de seguridad: si por cualquier
+        razón (timing, reordenamiento de frenado, etc.) un rodillo quedó
+        detenido en un símbolo distinto al que el controlador decidió,
+        aquí se corrige la posición ANTES de mostrar el mensaje de
+        ganaste/perdiste, para que la pantalla nunca contradiga el
+        resultado real de la partida.
+        """
+        if self._simbolos_finales is None:
+            return
+
+        for rodillo in self._rodillos:
+            esperado = self._simbolos_finales[rodillo.indice]
+            n = len(rodillo.orden)
+            simbolo_actual = rodillo.orden[(rodillo.base + 1) % n]
+
+            if simbolo_actual != esperado:
+                print(
+                    f"[Tragamonedas] Aviso: rodillo {rodillo.indice} mostraba "
+                    f"'{simbolo_actual}' pero el resultado real era '{esperado}'. "
+                    f"Corrigiendo posición."
+                )
+                rodillo.base = (rodillo.orden.index(esperado) - 1) % n
+                rodillo.offset = 0.0
+                self._renderizador.actualizar_rodillo(rodillo)
 
     def _on_resultado(self, mensaje: str, resultado_final: tuple, premio: int) -> None:
         self._ventana.after(0, self._registrar_resultado, mensaje, resultado_final, premio)

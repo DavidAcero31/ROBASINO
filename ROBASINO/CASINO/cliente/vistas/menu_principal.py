@@ -3,6 +3,7 @@ from PIL import Image, ImageTk
 from vistas.ruleta import Ruleta
 from vistas.casino_com import Jugador
 from vistas.tragamonedas import vistaTragamonedas
+from vistas.dados import Dados
 import os
 
 
@@ -197,7 +198,7 @@ class MenuPrincipal:
             ("ruleta.png", self.abrir_ruleta),
             ("info.png", self.abrir_info),
             ("tragamonedas.png", self.abrir_tragamonedas),
-            ("craps.png", self.abrir_craps)
+            ("craps.png", self.abrir_dados)
         ]
 
         self.imagenes_botones = []
@@ -254,6 +255,7 @@ class MenuPrincipal:
     def abrir_tragamonedas(self):
         jugador_prueba = Jugador("TestPlayer", creditos_iniciales=2000)
         vistaTragamonedas(jugador_prueba, self.root)
-
-    def abrir_craps(self):
-        print("Abrir Craps")
+    
+    def abrir_dados(self):
+        jugador_prueba = Jugador("TestPlayer", creditos_iniciales=2000)
+        Dados(jugador_prueba, self.root)
