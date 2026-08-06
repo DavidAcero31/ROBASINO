@@ -560,14 +560,20 @@ class vistaTragamonedas(tk.Frame):
     que se empaqueta directamente en la ventana del menú principal, en
     vez de abrir una ventana (Toplevel) propia."""
 
-    def __init__(self, jugador: Jugador, master: tk.Tk):
+    def __init__(self, jugador: Jugador, master: tk.Tk, conexion=None):
         super().__init__(
             master, bg=COLOR_BG,
             highlightbackground=COLOR_METAL_CLARO, highlightthickness=3,
         )
         self.master = master
         self.jugador = jugador
-        self._controlador = ControladorTragamonedas(jugador)
+        # `conexion` ya no es un socket crudo: es el GestorConexion
+        # compartido por todos los juegos (ver controladores/gestor_conexion.py
+        # y client.py). El servidor decide los rodillos y descuenta/
+        # acredita créditos contra la BD; este controlador solo envía la
+        # apuesta, se suscribe a sus acciones y traduce la respuesta
+        # autoritativa.
+        self._controlador = ControladorTragamonedas(jugador, conexion)
 
         # Título nativo de la ventana: la raíz (tk.Tk) es compartida con
         # menu_principal.py, así que se actualiza aquí para reflejar el
@@ -1012,6 +1018,12 @@ class vistaTragamonedas(tk.Frame):
             self._banner_after_id = None
         self.master.unbind("<Configure>", self._id_bind_configure)
 
+        # Deja de recibir mensajes de Tragamonedas: sin esto, el
+        # controlador seguiría suscrito en GestorConexion aunque la
+        # vista ya se haya destruido (la causa original de que
+        # "Tragamonedas" pareciera girar para siempre).
+        self._controlador.cerrar()
+
         self.destroy()
 
     def _cambiar_apuesta(self, delta: int) -> None:
@@ -1047,10 +1059,12 @@ class vistaTragamonedas(tk.Frame):
         # mismo para dar paso a la nueva animación.
         self._ocultar_indicadores_victoria()
 
-        # La apuesta ya se descontó de verdad en validar_apuesta() (arriba).
-        # Se refleja aquí de inmediato para que el jugador vea el descuento
-        # al instante, en vez de esperar a que termine la animación.
-        self._var_creditos.set(str(self.jugador.creditos))
+        # validar_apuesta() ya NO descuenta nada: es solo una validación de
+        # lectura contra self.jugador.creditos. El servidor es quien de
+        # verdad cobra la apuesta contra la BD y nos avisa el saldo real
+        # (vía "resultado_tragamonedas"/"creditos_actualizados"), así que
+        # los créditos se refrescan en _finalizar_giro() cuando esa
+        # respuesta llega, no acá.
 
         for rodillo in self._rodillos:
             rodillo.iniciar_giro()
