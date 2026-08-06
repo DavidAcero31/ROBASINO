@@ -13,13 +13,22 @@ BG_DARK = "#0a1f12"
 BG_PANEL = "#0f2a1a"
 BORDER = "#5a7a5a"
 GOLD = "#f0c04a"
+GOLD_HOVER = "#f5d67a"
 MINT_TEXT = "#8fd6a8"
 GREEN_VALUE = "#4ade80"
-BTN_BG = "#c8f0d0"
-BTN_BG_HOVER = "#a9e6bb"
-BTN_BG_OFF = "#4a5a4f"
-BTN_FG = "#0a1f12"
-BTN_FG_OFF = "#8a988e"
+
+# Botón principal (ROLL/APOSTAR): rojo sólido con texto blanco, como los
+# botones "píldora" de la referencia (OK, CLEAR, REBET, ROLL).
+BTN_BG = "#c62828"
+BTN_BG_HOVER = "#e0473c"
+BTN_BG_OFF = "#5c3a37"
+BTN_FG = "#fdf6ec"
+BTN_FG_OFF = "#a08c86"
+
+# Stepper de apuesta (-/+): dorado, para diferenciarlo del botón de acción.
+APUESTA_MIN = 10
+APUESTA_MAX = 500
+PASO_APUESTA = 10
 
 CARA_TAM = 84            # tamaño de la cara frontal (más chica para dejar lugar al volumen)
 PROF = 20                # "profundidad" isométrica de las caras superior/lateral
@@ -40,6 +49,22 @@ COLOR_PIP = "#1a1a1a"
 DURACION_ANIMACION_MS = 900
 VUELTAS_DADO_1 = 5.5 * math.pi
 VUELTAS_DADO_2 = 4.7 * math.pi
+
+# Referencia para el escalado responsive: tamaño "de diseño" de la
+# ventana contra el cual se calcula el factor de escala de los dados.
+ANCHO_REF = 700
+ALTO_REF = 750
+ESCALA_MIN = 0.7
+ESCALA_MAX = 1.6
+RETARDO_RESIZE_MS = 120  # debounce: no redibujar en cada pixel de arrastre
+
+# Límites de la ventana derivados de la misma escala: así lo que se ve
+# "más chico" o "más grande" en pantalla coincide con lo que se puede
+# efectivamente redimensionar.
+ANCHO_MIN = int(ANCHO_REF * ESCALA_MIN)
+ALTO_MIN = int(ALTO_REF * ESCALA_MIN)
+ANCHO_MAX = int(ANCHO_REF * ESCALA_MAX)
+ALTO_MAX = int(ALTO_REF * ESCALA_MAX)
 
 POSICIONES_PUNTOS = {
     1: [(0.5, 0.5)],
@@ -97,6 +122,55 @@ class BotonRedondeado(tk.Canvas):
         self.itemconfig(self._texto, fill=BTN_FG if activo else BTN_FG_OFF)
 
 
+class BotonCircular(tk.Canvas):
+    """Botón circular tipo 'ficha' para el stepper de apuesta (-/+), en
+    vez del típico Spinbox con flechitas nativas de Tkinter."""
+
+    def __init__(self, master, texto, comando, diametro=34,
+                 fuente=("Arial", 15, "bold")):
+        super().__init__(master, width=diametro, height=diametro,
+                          bg=master["bg"], highlightthickness=0, bd=0)
+        self.comando = comando
+        self.activo = True
+        self._circulo = self.create_oval(1, 1, diametro - 1, diametro - 1,
+                                          fill=GOLD, outline="")
+        self._texto = self.create_text(diametro / 2, diametro / 2, text=texto,
+                                        fill=BG_DARK, font=fuente)
+        self.bind("<Button-1>", self._al_hacer_clic)
+        self.bind("<Enter>", lambda e: self._hover(True))
+        self.bind("<Leave>", lambda e: self._hover(False))
+
+    def _hover(self, dentro: bool) -> None:
+        if self.activo:
+            self.itemconfig(self._circulo, fill=GOLD_HOVER if dentro else GOLD)
+
+    def _al_hacer_clic(self, _evento) -> None:
+        if self.activo and self.comando:
+            self.comando()
+
+    def set_estado(self, activo: bool) -> None:
+        self.activo = activo
+        self.itemconfig(self._circulo, fill=GOLD if activo else BORDER)
+        self.itemconfig(self._texto, fill=BG_DARK if activo else "#3a4a3f")
+
+
+class VisorApuesta(tk.Canvas):
+    """Pastilla dorada que muestra el monto de apuesta seleccionado,
+    entre los dos botones circulares del stepper."""
+
+    def __init__(self, master, texto_inicial, ancho=92, alto=38, radio=18,
+                 fuente=("Arial", 15, "bold")):
+        super().__init__(master, width=ancho, height=alto,
+                          bg=master["bg"], highlightthickness=0, bd=0)
+        rect_redondeado(self, 1, 1, ancho - 1, alto - 1, radio,
+                         fill=BG_DARK, outline=GOLD, width=2)
+        self._texto = self.create_text(ancho / 2, alto / 2, text=texto_inicial,
+                                        fill=GOLD, font=fuente)
+
+    def set_valor(self, texto: str) -> None:
+        self.itemconfig(self._texto, text=texto)
+
+
 class Dados(tk.Frame):
     """Vista del juego de Craps, con el mismo lenguaje visual de Tragamonedas."""
 
@@ -108,11 +182,24 @@ class Dados(tk.Frame):
         self.pack(fill="both", expand=True)
 
         self._animando = False
+        self._apuesta_seleccionada = APUESTA_MIN
+
+        # Escalado responsive de los dados.
+        self._escala = 1.0
+        self._resize_after_id = None
+        self._valor_dado1 = 1
+        self._valor_dado2 = 1
+
+        # Panel de reglas (oculto por defecto).
+        self._panel_reglas_visible = False
 
         self._construir_encabezado()
+        self._construir_panel_reglas()
         self._construir_panel_dados()
         self._construir_barra_estadisticas()
         self._actualizar_creditos()
+
+        self.master.bind("<Configure>", self._on_configure_ventana)
 
     # ------------------------------------------------------------------
     # Encabezado (doble marco, título dorado + subtítulo)
@@ -122,6 +209,7 @@ class Dados(tk.Frame):
         externo = tk.Frame(self, bg=BG_DARK, highlightbackground=BORDER,
                             highlightthickness=2, bd=0)
         externo.pack(fill="x", padx=15, pady=(15, 10))
+        self._frame_encabezado = externo  # ancla para insertar el panel de reglas
 
         interno = tk.Frame(externo, bg=BG_PANEL, highlightbackground=BORDER,
                             highlightthickness=1)
@@ -135,6 +223,51 @@ class Dados(tk.Frame):
             interno, text="C R A P S", bg=BG_PANEL, fg=MINT_TEXT,
             font=("Arial", 11, "bold")
         ).pack(pady=(0, 10))
+
+        # Botón de ayuda (❓), esquina superior derecha, igual que el ⚙️
+        # de la referencia: no ensucia la pantalla si el jugador ya sabe jugar.
+        self.btn_ayuda = BotonCircular(
+            interno, "❓", self._alternar_panel_reglas, diametro=30,
+            fuente=("Arial", 13, "bold"),
+        )
+        self.btn_ayuda.place(relx=1.0, x=-10, y=10, anchor="ne")
+
+    # ------------------------------------------------------------------
+    # Panel de reglas (desplegable, para quien no sepa jugar)
+    # ------------------------------------------------------------------
+
+    def _construir_panel_reglas(self) -> None:
+        self.panel_reglas = tk.Frame(
+            self, bg=BG_PANEL, highlightbackground=BORDER, highlightthickness=1
+        )
+        # No se empaqueta todavía: arranca oculto.
+
+        tk.Label(
+            self.panel_reglas, text="¿Cómo se juega? — Pase simple",
+            bg=BG_PANEL, fg=GOLD, font=("Arial", 12, "bold"),
+        ).pack(anchor="w", padx=14, pady=(10, 4))
+
+        reglas = (
+            "• Primera tirada: si sale 7 u 11, ganas de inmediato.\n"
+            "• Primera tirada: si sale 2, 3 o 12 (\"craps\"), pierdes de inmediato.\n"
+            "• Cualquier otro número (4, 5, 6, 8, 9 o 10) se fija como \"el punto\".\n"
+            "• Con el punto establecido: si vuelve a salir ese número, ganas.\n"
+            "• Con el punto establecido: si sale 7 (\"seven out\"), pierdes.\n"
+            "• Cualquier otro valor no decide nada: vuelves a lanzar."
+        )
+        tk.Label(
+            self.panel_reglas, text=reglas, bg=BG_PANEL, fg=MINT_TEXT,
+            font=("Arial", 10), justify="left", anchor="w",
+        ).pack(anchor="w", padx=14, pady=(0, 12), fill="x")
+
+    def _alternar_panel_reglas(self) -> None:
+        if self._panel_reglas_visible:
+            self.panel_reglas.pack_forget()
+        else:
+            self.panel_reglas.pack(
+                fill="x", padx=15, pady=(0, 10), after=self._frame_encabezado
+            )
+        self._panel_reglas_visible = not self._panel_reglas_visible
 
     # ------------------------------------------------------------------
     # Panel de dados (doble marco central)
@@ -179,6 +312,43 @@ class Dados(tk.Frame):
         )
         self.lbl_punto.pack(pady=(0, 10))
 
+    # ------------------------------------------------------------------
+    # Escalado responsive (dados dibujados con coordenadas fijas en
+    # píxeles: sin esto, al agrandar la ventana se ven "achicados" en
+    # el medio en vez de crecer con el resto de la interfaz)
+    # ------------------------------------------------------------------
+
+    def _on_configure_ventana(self, evento) -> None:
+        if evento.widget is not self.master:
+            return
+        if self._resize_after_id is not None:
+            self.master.after_cancel(self._resize_after_id)
+        # Debounce: espera a que el usuario suelte el arrastre antes de
+        # recalcular, para no redibujar en cada pixel de resize.
+        self._resize_after_id = self.master.after(RETARDO_RESIZE_MS, self._aplicar_escala)
+
+    def _aplicar_escala(self) -> None:
+        self._resize_after_id = None
+        ancho = self.master.winfo_width()
+        alto = self.master.winfo_height()
+        if ancho <= 1 or alto <= 1:
+            return
+
+        nueva_escala = min(ancho / ANCHO_REF, alto / ALTO_REF)
+        nueva_escala = max(ESCALA_MIN, min(ESCALA_MAX, nueva_escala))
+        if abs(nueva_escala - self._escala) < 0.03:
+            return  # cambio insignificante: evita redibujos innecesarios
+
+        self._escala = nueva_escala
+        ancho_canvas = int(CANVAS_ANCHO * self._escala)
+        alto_canvas = int(CANVAS_ALTO * self._escala)
+        for canvas in (self.canvas_dado1, self.canvas_dado2):
+            canvas.config(width=ancho_canvas, height=alto_canvas)
+
+        if not self._animando:
+            self._dibujar_dado(self.canvas_dado1, self._valor_dado1)
+            self._dibujar_dado(self.canvas_dado2, self._valor_dado2)
+
     def _dibujar_dado(self, canvas: tk.Canvas, valor: int,
                        escala_x: float = 1.0, offset_y: float = 0.0) -> None:
         """Dibuja el dado como un cubo isométrico: cara frontal (con pips),
@@ -192,23 +362,39 @@ class Dados(tk.Frame):
         """
         canvas.delete("all")
         escala_x = max(0.12, min(1.0, escala_x))
-        ancho_cara = CARA_TAM * escala_x
-        prof = PROF * (0.4 + 0.6 * escala_x)  # el volumen también se atenúa un poco de canto
+        e = self._escala  # factor responsive: recalculado en cada resize
 
-        x1 = MARGEN_IZQ + (CARA_TAM - ancho_cara) / 2
+        cara_tam = CARA_TAM * e
+        prof_base = PROF * e
+        margen_sup = MARGEN_SUP * e
+        margen_izq = MARGEN_IZQ * e
+        offset_y = offset_y * e
+
+        ancho_cara = cara_tam * escala_x
+        prof = prof_base * (0.4 + 0.6 * escala_x)  # el volumen también se atenúa un poco de canto
+
+        x1 = margen_izq + (cara_tam - ancho_cara) / 2
         x2 = x1 + ancho_cara
-        y1 = MARGEN_SUP + offset_y
-        y2 = y1 + CARA_TAM
+        y1 = margen_sup + offset_y
+        y2 = y1 + cara_tam
 
         # Sombra proyectada en la "mesa": posición fija abajo, se angosta
         # con el giro y se achica/aleja cuando el dado salta.
-        sombra_y1 = MARGEN_SUP + CARA_TAM + 8
-        sombra_alto = max(4, 12 - abs(offset_y) * 0.35)
-        sombra_ancho = (CARA_TAM + PROF) * max(0.5, 1 - abs(offset_y) / 70)
-        sx1 = MARGEN_IZQ + (CARA_TAM + PROF - sombra_ancho) / 2
+        sombra_y1 = margen_sup + cara_tam + 8 * e
+        sombra_alto = max(4, 12 - abs(offset_y) * 0.35) * e
+        sombra_ancho = (cara_tam + prof_base) * max(0.5, 1 - abs(offset_y) / 70)
+        sx1 = margen_izq + (cara_tam + prof_base - sombra_ancho) / 2
         rect_redondeado(canvas, sx1, sombra_y1, sx1 + sombra_ancho,
                          sombra_y1 + sombra_alto, sombra_alto / 2,
                          fill=COLOR_SOMBRA, outline="")
+
+        # Recuerda el último valor "asentado" (sin giro ni rebote) para
+        # poder redibujarlo si cambia la escala por un resize.
+        if escala_x >= 0.999 and offset_y == 0.0:
+            if canvas is self.canvas_dado1:
+                self._valor_dado1 = valor
+            elif canvas is self.canvas_dado2:
+                self._valor_dado2 = valor
 
         # Cara superior (paralelogramo): une el borde de arriba de la
         # cara frontal con una "cara trasera" desplazada arriba-derecha.
@@ -224,10 +410,10 @@ class Dados(tk.Frame):
 
         if escala_x > 0.24:
             canvas.create_rectangle(x1, y1, x2, y2, fill=COLOR_CARA, outline=GOLD, width=2)
-            r = 6.5 * min(1.0, 0.5 + escala_x * 0.6)
+            r = 6.5 * e * min(1.0, 0.5 + escala_x * 0.6)
             for fx, fy in POSICIONES_PUNTOS.get(valor, []):
                 cx = x1 + fx * ancho_cara
-                cy = y1 + fy * CARA_TAM
+                cy = y1 + fy * cara_tam
                 canvas.create_oval(cx - r, cy - r, cx + r, cy + r,
                                     fill=COLOR_PIP, outline="")
         else:
@@ -297,13 +483,21 @@ class Dados(tk.Frame):
         tk.Label(fila_control, text="Apuesta:", bg=BG_PANEL, fg=MINT_TEXT,
                  font=("Arial", 10, "bold")).pack(side="left")
 
-        self.entrada_apuesta = tk.Spinbox(fila_control, from_=10, to=500, width=8)
-        self.entrada_apuesta.delete(0, "end")
-        self.entrada_apuesta.insert(0, "10")
-        self.entrada_apuesta.pack(side="left", padx=8)
+        self.btn_apuesta_menos = BotonCircular(
+            fila_control, "–", lambda: self._cambiar_apuesta(-PASO_APUESTA)
+        )
+        self.btn_apuesta_menos.pack(side="left", padx=(8, 6))
 
-        tk.Label(fila_control, text="(10-500)", bg=BG_PANEL, fg=MINT_TEXT,
-                 font=("Arial", 9)).pack(side="left")
+        self.visor_apuesta = VisorApuesta(fila_control, str(self._apuesta_seleccionada))
+        self.visor_apuesta.pack(side="left")
+
+        self.btn_apuesta_mas = BotonCircular(
+            fila_control, "+", lambda: self._cambiar_apuesta(PASO_APUESTA)
+        )
+        self.btn_apuesta_mas.pack(side="left", padx=(6, 10))
+
+        tk.Label(fila_control, text=f"(Mín {APUESTA_MIN} · Máx {APUESTA_MAX})",
+                 bg=BG_PANEL, fg=MINT_TEXT, font=("Arial", 9)).pack(side="left")
 
         self.btn_accion = BotonRedondeado(
             fila_control, "🎲  LANZAR", self._al_presionar_accion
@@ -326,6 +520,14 @@ class Dados(tk.Frame):
     # Lógica de eventos
     # ------------------------------------------------------------------
 
+    def _cambiar_apuesta(self, delta: int) -> None:
+        if self._animando or self.controlador.hay_ronda_activa():
+            return
+        self._apuesta_seleccionada = max(
+            APUESTA_MIN, min(APUESTA_MAX, self._apuesta_seleccionada + delta)
+        )
+        self.visor_apuesta.set_valor(str(self._apuesta_seleccionada))
+
     def _al_presionar_accion(self) -> None:
         if self._animando:
             return
@@ -334,13 +536,9 @@ class Dados(tk.Frame):
         if self.controlador.hay_ronda_activa():
             self.controlador.continuar_lanzamiento(self._on_resultado)
         else:
-            try:
-                apuesta = int(self.entrada_apuesta.get())
-            except ValueError:
-                messagebox.showerror("Error", "Apuesta inválida")
-                self.btn_accion.set_estado(True)
-                return
-
+            self.btn_apuesta_menos.set_estado(False)
+            self.btn_apuesta_mas.set_estado(False)
+            apuesta = self._apuesta_seleccionada
             self.lbl_valor_apuesta.config(text=f"{apuesta:.0f}")
             self.controlador.iniciar_lanzamiento(apuesta, self._on_resultado)
 
@@ -364,6 +562,8 @@ class Dados(tk.Frame):
             self.btn_accion.set_texto("🎲  LANZAR" if ronda_activa else "🎲  APOSTAR")
 
             if not ronda_activa:
+                self.btn_apuesta_menos.set_estado(True)
+                self.btn_apuesta_mas.set_estado(True)
                 messagebox.showinfo("Resultado", mensaje)
 
         if resultado is not None:
@@ -380,7 +580,15 @@ if __name__ == "__main__":
 
     root = tk.Tk()
     root.title("ROBASINO - Craps")
-    root.geometry("700x750")
+    root.geometry(f"{ANCHO_REF}x{ALTO_REF}")
+
+    # Ventana normal: se puede maximizar/achicar como cualquier app de
+    # escritorio, pero entre estos límites y siempre en proporción 700:750
+    # (evita que se deforme el layout al estirar solo un eje).
+    root.minsize(ANCHO_MIN, ALTO_MIN)
+    root.maxsize(ANCHO_MAX, ALTO_MAX)
+    root.wm_aspect(ANCHO_REF, ALTO_REF, ANCHO_REF, ALTO_REF)
+
     root.configure(bg=BG_DARK)
     jugador_prueba = Jugador("TestPlayer", creditos_iniciales=2000)
     Dados(jugador_prueba, root)
