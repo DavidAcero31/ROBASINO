@@ -262,11 +262,16 @@ class PlacaEstado(tk.Canvas):
 class Dados(tk.Frame):
     """Vista del juego de Craps, con el mismo lenguaje visual de Tragamonedas."""
 
-    def __init__(self, jugador, master: tk.Tk):
+    def __init__(self, jugador, master: tk.Tk, conexion=None):
         super().__init__(master, bg=BG_DARK)
         self.master = master
         self.jugador = jugador
-        self.controlador = ControladorDados(jugador)
+        # `conexion` ya no es un socket crudo: es el GestorConexion
+        # compartido por todos los juegos (ver controladores/gestor_conexion.py
+        # y client.py). El servidor decide los dados y descuenta/acredita
+        # créditos contra la BD; este controlador solo envía la apuesta,
+        # se suscribe a sus acciones y traduce la respuesta autoritativa.
+        self.controlador = ControladorDados(jugador, conexion)
         self.pack(fill="both", expand=True)
 
         self._animando = False
@@ -710,6 +715,12 @@ class Dados(tk.Frame):
             self.master.after_cancel(self._fondo_resize_after_id)
             self._fondo_resize_after_id = None
         self.master.unbind("<Configure>", self._id_bind_configure)
+
+        # Deja de recibir mensajes de Craps: sin esto, el controlador
+        # seguiría suscrito en GestorConexion aunque la vista ya se
+        # haya destruido (la causa original de que "Dados" se quedara
+        # esperando una respuesta que ya nadie iba a mostrar).
+        self.controlador.cerrar()
 
         self.destroy()
 
