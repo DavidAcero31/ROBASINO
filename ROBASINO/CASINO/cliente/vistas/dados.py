@@ -1,21 +1,41 @@
+from __future__ import annotations
+
 import math
+import os
 import random
 import time
 import tkinter as tk
 from tkinter import messagebox
 
+try:
+    from PIL import Image, ImageTk
+    PIL_DISPONIBLE = True
+except ImportError:  # Pillow no instalado: se usa un color sólido de respaldo.
+    PIL_DISPONIBLE = False
+
 from controladores.controlador_dados import ControladorDados
 
 # ----------------------------------------------------------------------
-# Paleta consistente con tragamonedas.py
+# Paleta "mesa de fieltro" — tonos casi negros con incrustaciones doradas.
 # ----------------------------------------------------------------------
-BG_DARK = "#0a1f12"
-BG_PANEL = "#0f2a1a"
-BORDER = "#5a7a5a"
+BG_DARK = "#07140e"       # contenedores principales: casi negro-verde
+BG_PANEL = "#081a12"      # variante sutil para paneles internos
+BORDER = "#c5a059"        # borde dorado suave ("incrustación metálica")
+BORDER_SOFT = "#8a7336"   # dorado apagado, para bordes secundarios
 GOLD = "#f0c04a"
 GOLD_HOVER = "#f5d67a"
+GOLD_MUTED = "#a39262"    # etiquetas de título (CREDITOS / APUESTA / ...)
+GOLD_BRIGHT = "#ffd700"   # valores numéricos grandes
 MINT_TEXT = "#8fd6a8"
-GREEN_VALUE = "#4ade80"
+
+# Placa de estado del juego.
+VERDE_GANADA = "#2ecc71"
+ROJO_PERDIDA = "#e74c3c"
+AMARILLO_PUNTO = "#f1c40f"
+
+# Imagen de fondo (fieltro verde). Se busca en varias rutas comunes del
+# proyecto; si no se encuentra, la interfaz simplemente usa BG_DARK.
+NOMBRE_IMAGEN_FONDO = "FondoDados.png"
 
 # Botón principal (ROLL/APOSTAR): rojo sólido con texto blanco, como los
 # botones "píldora" de la referencia (OK, CLEAR, REBET, ROLL).
@@ -76,6 +96,29 @@ POSICIONES_PUNTOS = {
 }
 
 
+def _localizar_imagen_fondo() -> str | None:
+    """Busca FondoDados.png en la carpeta 'recursos' del proyecto.
+
+    Este archivo (dados.py) vive en CASINO/cliente/vistas/, y la imagen
+    en CASINO/cliente/recursos/FondoDados.png — es decir, un nivel arriba
+    de 'vistas' y luego dentro de 'recursos'. Se dejan además un par de
+    rutas alternativas por si se reorganiza el proyecto, para no romper
+    la app si no la encuentra."""
+    base = os.path.dirname(os.path.abspath(__file__))  # .../CASINO/cliente/vistas
+    raiz_cliente = os.path.dirname(base)                # .../CASINO/cliente
+    candidatos = [
+        os.path.join(raiz_cliente, "recursos", NOMBRE_IMAGEN_FONDO),
+        os.path.join(base, NOMBRE_IMAGEN_FONDO),
+        os.path.join(base, "recursos", NOMBRE_IMAGEN_FONDO),
+        os.path.join(base, "assets", NOMBRE_IMAGEN_FONDO),
+        os.path.join(base, "imagenes", NOMBRE_IMAGEN_FONDO),
+    ]
+    for ruta in candidatos:
+        if os.path.isfile(ruta):
+            return ruta
+    return None
+
+
 def rect_redondeado(canvas: tk.Canvas, x1, y1, x2, y2, radio=18, **kwargs):
     """Dibuja un rectángulo con esquinas redondeadas (Tkinter no lo soporta
     de forma nativa, así que se aproxima con un polígono suavizado)."""
@@ -132,17 +175,20 @@ class BotonCircular(tk.Canvas):
                           bg=master["bg"], highlightthickness=0, bd=0)
         self.comando = comando
         self.activo = True
+        # Fondo oscuro con borde e ícono dorado: integrado con el resto
+        # de contenedores oscuros de la interfaz.
         self._circulo = self.create_oval(1, 1, diametro - 1, diametro - 1,
-                                          fill=GOLD, outline="")
+                                          fill=BG_PANEL, outline=BORDER, width=1)
         self._texto = self.create_text(diametro / 2, diametro / 2, text=texto,
-                                        fill=BG_DARK, font=fuente)
+                                        fill=GOLD, font=fuente)
         self.bind("<Button-1>", self._al_hacer_clic)
         self.bind("<Enter>", lambda e: self._hover(True))
         self.bind("<Leave>", lambda e: self._hover(False))
 
     def _hover(self, dentro: bool) -> None:
         if self.activo:
-            self.itemconfig(self._circulo, fill=GOLD_HOVER if dentro else GOLD)
+            self.itemconfig(self._circulo, outline=GOLD_HOVER if dentro else BORDER)
+            self.itemconfig(self._texto, fill=GOLD_HOVER if dentro else GOLD)
 
     def _al_hacer_clic(self, _evento) -> None:
         if self.activo and self.comando:
@@ -150,8 +196,8 @@ class BotonCircular(tk.Canvas):
 
     def set_estado(self, activo: bool) -> None:
         self.activo = activo
-        self.itemconfig(self._circulo, fill=GOLD if activo else BORDER)
-        self.itemconfig(self._texto, fill=BG_DARK if activo else "#3a4a3f")
+        self.itemconfig(self._circulo, outline=BORDER if activo else BORDER_SOFT)
+        self.itemconfig(self._texto, fill=GOLD if activo else "#5a5140")
 
 
 class VisorApuesta(tk.Canvas):
@@ -169,6 +215,40 @@ class VisorApuesta(tk.Canvas):
 
     def set_valor(self, texto: str) -> None:
         self.itemconfig(self._texto, text=texto)
+
+
+class PlacaEstado(tk.Canvas):
+    """Tarjeta dedicada para el estado de la ronda, justo debajo de los
+    dados: cambia de color según si la ronda fue ganada, perdida o si
+    hay un punto establecido."""
+
+    COLORES = {
+        "ganada": VERDE_GANADA,
+        "perdida": ROJO_PERDIDA,
+        "punto": AMARILLO_PUNTO,
+        "neutral": GOLD_MUTED,
+    }
+
+    def __init__(self, master, ancho=230, alto=38, radio=10,
+                 fuente=("Arial", 13, "bold")):
+        super().__init__(master, width=ancho, height=alto,
+                          bg=master["bg"], highlightthickness=0, bd=0)
+        self._ancho, self._alto = ancho, alto
+        self._fondo = rect_redondeado(
+            self, 1, 1, ancho - 1, alto - 1, radio,
+            fill=BG_DARK, outline=GOLD_MUTED, width=1,
+        )
+        self._texto = self.create_text(
+            ancho / 2, alto / 2, text="—", fill=GOLD_MUTED, font=fuente
+        )
+
+    def set_estado(self, texto: str, tipo: str = "neutral") -> None:
+        color = self.COLORES.get(tipo, GOLD_MUTED)
+        # Placa oscura con acento de color en el borde y el texto (en vez
+        # de un bloque sólido) para que siga integrada con el resto de la
+        # interfaz sobre el fieltro.
+        self.itemconfig(self._fondo, outline=color, fill=BG_DARK)
+        self.itemconfig(self._texto, text=texto, fill=color)
 
 
 class Dados(tk.Frame):
@@ -193,13 +273,30 @@ class Dados(tk.Frame):
         # Panel de reglas (oculto por defecto).
         self._panel_reglas_visible = False
 
+        # ------------------------------------------------------------
+        # Canvas de fondo (fieltro): ocupa toda la ventana y va detrás
+        # de todo lo demás. Los paneles se crean después de este punto,
+        # por lo que Tkinter los apila automáticamente por encima.
+        # ------------------------------------------------------------
+        self._imagen_fondo_pil = None
+        self._imagen_fondo_tk = None
+        self._id_imagen_fondo = None
+        self._fondo_resize_after_id = None
+
+        self.canvas_fondo = tk.Canvas(self, highlightthickness=0, bd=0, bg=BG_DARK)
+        self.canvas_fondo.place(x=0, y=0, relwidth=1, relheight=1)
+        self._cargar_imagen_fondo()
+        self.canvas_fondo.bind("<Configure>", self._on_configure_fondo)
+
         self._construir_encabezado()
         self._construir_panel_reglas()
         self._construir_panel_dados()
         self._construir_barra_estadisticas()
         self._actualizar_creditos()
 
-        self.master.bind("<Configure>", self._on_configure_ventana)
+        self._id_bind_configure = self.master.bind(
+            "<Configure>", self._on_configure_ventana, add="+"
+        )
 
     # ------------------------------------------------------------------
     # Encabezado (doble marco, título dorado + subtítulo)
@@ -207,11 +304,11 @@ class Dados(tk.Frame):
 
     def _construir_encabezado(self) -> None:
         externo = tk.Frame(self, bg=BG_DARK, highlightbackground=BORDER,
-                            highlightthickness=2, bd=0)
+                            highlightthickness=1, bd=0)
         externo.pack(fill="x", padx=15, pady=(15, 10))
         self._frame_encabezado = externo  # ancla para insertar el panel de reglas
 
-        interno = tk.Frame(externo, bg=BG_PANEL, highlightbackground=BORDER,
+        interno = tk.Frame(externo, bg=BG_PANEL, highlightbackground=BORDER_SOFT,
                             highlightthickness=1)
         interno.pack(fill="x", padx=6, pady=6)
 
@@ -231,6 +328,13 @@ class Dados(tk.Frame):
             fuente=("Arial", 13, "bold"),
         )
         self.btn_ayuda.place(relx=1.0, x=-10, y=10, anchor="ne")
+
+        # Botón para volver al menú principal, esquina superior izquierda.
+        self.btn_volver = BotonRedondeado(
+            interno, "← Menú", self._volver_menu, ancho=100, alto=30, radio=15,
+            fuente=("Arial", 11, "bold"),
+        )
+        self.btn_volver.place(x=10, y=10, anchor="nw")
 
     # ------------------------------------------------------------------
     # Panel de reglas (desplegable, para quien no sepa jugar)
@@ -275,14 +379,14 @@ class Dados(tk.Frame):
 
     def _construir_panel_dados(self) -> None:
         externo = tk.Frame(self, bg=BG_DARK, highlightbackground=BORDER,
-                            highlightthickness=2)
+                            highlightthickness=1)
         externo.pack(fill="both", expand=True, padx=15, pady=10)
 
-        medio = tk.Frame(externo, bg=BG_PANEL, highlightbackground=BORDER,
+        medio = tk.Frame(externo, bg=BG_PANEL, highlightbackground=BORDER_SOFT,
                           highlightthickness=1)
         medio.pack(fill="both", expand=True, padx=8, pady=8)
 
-        interno = tk.Frame(medio, bg=BG_DARK, highlightbackground=BORDER,
+        interno = tk.Frame(medio, bg=BG_DARK, highlightbackground=BORDER_SOFT,
                             highlightthickness=1)
         interno.pack(padx=20, pady=20)
 
@@ -300,17 +404,62 @@ class Dados(tk.Frame):
         self._dibujar_dado(self.canvas_dado1, 1)
         self._dibujar_dado(self.canvas_dado2, 1)
 
-        self.lbl_estado = tk.Label(
-            medio, text="Estado: -", bg=BG_PANEL, fg=MINT_TEXT,
-            font=("Arial", 12, "bold")
-        )
-        self.lbl_estado.pack(pady=(0, 4))
+        # Placa de estado: tarjeta dedicada justo debajo de los dados que
+        # cambia de color según gane/pierda la ronda o se marque un punto.
+        self.placa_estado = PlacaEstado(medio)
+        self.placa_estado.pack(pady=(0, 12))
 
-        self.lbl_punto = tk.Label(
-            medio, text="Punto: -", bg=BG_PANEL, fg=GOLD,
-            font=("Arial", 12, "bold")
+    # ------------------------------------------------------------------
+    # Fondo de fieltro (Canvas principal)
+    # ------------------------------------------------------------------
+
+    def _cargar_imagen_fondo(self) -> None:
+        if not PIL_DISPONIBLE:
+            return  # sin Pillow: se mantiene el color sólido BG_DARK
+        ruta = _localizar_imagen_fondo()
+        if ruta is None:
+            return
+        try:
+            self._imagen_fondo_pil = Image.open(ruta).convert("RGB")
+        except Exception:
+            self._imagen_fondo_pil = None
+
+    def _on_configure_fondo(self, evento) -> None:
+        if self._imagen_fondo_pil is None:
+            return
+        if self._fondo_resize_after_id is not None:
+            self.master.after_cancel(self._fondo_resize_after_id)
+        # Debounce: evita re-escalar la imagen en cada pixel de arrastre.
+        self._fondo_resize_after_id = self.master.after(
+            RETARDO_RESIZE_MS, lambda: self._aplicar_imagen_fondo(evento.width, evento.height)
         )
-        self.lbl_punto.pack(pady=(0, 10))
+
+    def _aplicar_imagen_fondo(self, ancho: int, alto: int) -> None:
+        self._fondo_resize_after_id = None
+        if ancho <= 1 or alto <= 1 or self._imagen_fondo_pil is None:
+            return
+
+        # Ajuste tipo "cover": escala la imagen para cubrir todo el
+        # Canvas y recorta el sobrante, sin deformarla.
+        im_ancho, im_alto = self._imagen_fondo_pil.size
+        escala = max(ancho / im_ancho, alto / im_alto)
+        nuevo_ancho = max(1, math.ceil(im_ancho * escala))
+        nuevo_alto = max(1, math.ceil(im_alto * escala))
+        redimensionada = self._imagen_fondo_pil.resize(
+            (nuevo_ancho, nuevo_alto), Image.LANCZOS
+        )
+        x0 = (nuevo_ancho - ancho) // 2
+        y0 = (nuevo_alto - alto) // 2
+        recortada = redimensionada.crop((x0, y0, x0 + ancho, y0 + alto))
+
+        self._imagen_fondo_tk = ImageTk.PhotoImage(recortada)
+        if self._id_imagen_fondo is None:
+            self._id_imagen_fondo = self.canvas_fondo.create_image(
+                0, 0, anchor="nw", image=self._imagen_fondo_tk
+            )
+        else:
+            self.canvas_fondo.itemconfig(self._id_imagen_fondo, image=self._imagen_fondo_tk)
+            self.canvas_fondo.coords(self._id_imagen_fondo, 0, 0)
 
     # ------------------------------------------------------------------
     # Escalado responsive (dados dibujados con coordenadas fijas en
@@ -463,24 +612,24 @@ class Dados(tk.Frame):
 
     def _construir_barra_estadisticas(self) -> None:
         externo = tk.Frame(self, bg=BG_DARK, highlightbackground=BORDER,
-                            highlightthickness=2)
+                            highlightthickness=1)
         externo.pack(fill="x", padx=15, pady=(0, 15))
 
-        barra = tk.Frame(externo, bg=BG_PANEL, highlightbackground=BORDER,
+        barra = tk.Frame(externo, bg=BG_PANEL, highlightbackground=BORDER_SOFT,
                           highlightthickness=1)
         barra.pack(fill="x", padx=6, pady=6)
 
         fila_stats = tk.Frame(barra, bg=BG_PANEL)
         fila_stats.pack(fill="x", padx=10, pady=(10, 0))
 
-        self._crear_estadistica(fila_stats, "CREDITOS", "lbl_valor_creditos", GREEN_VALUE)
-        self._crear_estadistica(fila_stats, "APUESTA", "lbl_valor_apuesta", GOLD)
-        self._crear_estadistica(fila_stats, "ULTIMO RESULTADO", "lbl_valor_ultimo", MINT_TEXT)
+        self._crear_estadistica(fila_stats, "CREDITOS", "lbl_valor_creditos")
+        self._crear_estadistica(fila_stats, "APUESTA", "lbl_valor_apuesta")
+        self._crear_estadistica(fila_stats, "ULTIMO RESULTADO", "lbl_valor_ultimo")
 
         fila_control = tk.Frame(barra, bg=BG_PANEL)
         fila_control.pack(fill="x", padx=10, pady=10)
 
-        tk.Label(fila_control, text="Apuesta:", bg=BG_PANEL, fg=MINT_TEXT,
+        tk.Label(fila_control, text="Apuesta:", bg=BG_PANEL, fg=GOLD_MUTED,
                  font=("Arial", 10, "bold")).pack(side="left")
 
         self.btn_apuesta_menos = BotonCircular(
@@ -497,28 +646,59 @@ class Dados(tk.Frame):
         self.btn_apuesta_mas.pack(side="left", padx=(6, 10))
 
         tk.Label(fila_control, text=f"(Mín {APUESTA_MIN} · Máx {APUESTA_MAX})",
-                 bg=BG_PANEL, fg=MINT_TEXT, font=("Arial", 9)).pack(side="left")
+                 bg=BG_PANEL, fg=GOLD_MUTED, font=("Arial", 9)).pack(side="left")
 
+        # Botón de acción principal: un poco más grande y con más aire
+        # interno para que resalte como el CTA de la barra.
         self.btn_accion = BotonRedondeado(
-            fila_control, "🎲  LANZAR", self._al_presionar_accion
+            fila_control, "🎲  LANZAR", self._al_presionar_accion,
+            ancho=190, alto=52, radio=26, fuente=("Arial", 14, "bold"),
         )
         self.btn_accion.pack(side="right")
 
-    def _crear_estadistica(self, padre, texto_etiqueta, nombre_attr, color_valor) -> None:
-        col = tk.Frame(padre, bg=BG_PANEL, highlightbackground=BORDER,
+    def _crear_estadistica(self, padre, texto_etiqueta, nombre_attr) -> None:
+        col = tk.Frame(padre, bg=BG_PANEL, highlightbackground=BORDER_SOFT,
                         highlightthickness=1)
         col.pack(side="left", fill="x", expand=True, padx=6)
 
-        tk.Label(col, text=texto_etiqueta, bg=BG_PANEL, fg=MINT_TEXT,
+        # Etiqueta de título: chica, en negrita, dorado apagado.
+        tk.Label(col, text=texto_etiqueta, bg=BG_PANEL, fg=GOLD_MUTED,
                  font=("Arial", 9, "bold")).pack(pady=(8, 0))
-        etiqueta_valor = tk.Label(col, text="-", bg=BG_PANEL, fg=color_valor,
-                                   font=("Arial", 16, "bold"))
+        # Valor numérico: bien grande y en dorado brillante.
+        etiqueta_valor = tk.Label(col, text="-", bg=BG_PANEL, fg=GOLD_BRIGHT,
+                                   font=("Arial", 22, "bold"))
         etiqueta_valor.pack(pady=(0, 8))
         setattr(self, nombre_attr, etiqueta_valor)
 
     # ------------------------------------------------------------------
     # Lógica de eventos
     # ------------------------------------------------------------------
+
+    def _volver_menu(self) -> None:
+        if self._animando:
+            return  # no se puede salir a mitad de la animación de los dados
+
+        if self.controlador.hay_ronda_activa():
+            seguro = messagebox.askyesno(
+                "Ronda en curso",
+                "Tienes una ronda de Craps en curso. Si vuelves al menú "
+                "se perderá la apuesta de esta ronda.\n\n¿Volver al menú de todos modos?",
+            )
+            if not seguro:
+                return
+
+        # Se cancela cualquier resize pendiente y se desengancha SOLO el
+        # binding propio (por funcid), sin tocar el que usa MenuPrincipal
+        # para reescalarse a sí mismo.
+        if self._resize_after_id is not None:
+            self.master.after_cancel(self._resize_after_id)
+            self._resize_after_id = None
+        if self._fondo_resize_after_id is not None:
+            self.master.after_cancel(self._fondo_resize_after_id)
+            self._fondo_resize_after_id = None
+        self.master.unbind("<Configure>", self._id_bind_configure)
+
+        self.destroy()
 
     def _cambiar_apuesta(self, delta: int) -> None:
         if self._animando or self.controlador.hay_ronda_activa():
@@ -532,6 +712,7 @@ class Dados(tk.Frame):
         if self._animando:
             return
         self.btn_accion.set_estado(False)
+        self.btn_volver.set_estado(False)
 
         if self.controlador.hay_ronda_activa():
             self.controlador.continuar_lanzamiento(self._on_resultado)
@@ -552,14 +733,12 @@ class Dados(tk.Frame):
             if resultado is not None:
                 self.lbl_valor_ultimo.config(text=str(resultado.suma))
 
-            self.lbl_estado.config(
-                text=f"Estado: {self.controlador.obtener_estado()}" if ronda_activa or resultado else "Estado: -"
-            )
-            self.lbl_punto.config(text=f"Punto: {self.controlador.obtener_punto() or '-'}")
+            self._actualizar_placa_estado(ronda_activa, resultado)
             self._actualizar_creditos()
 
             self.btn_accion.set_estado(True)
             self.btn_accion.set_texto("🎲  LANZAR" if ronda_activa else "🎲  APOSTAR")
+            self.btn_volver.set_estado(True)
 
             if not ronda_activa:
                 self.btn_apuesta_menos.set_estado(True)
@@ -573,6 +752,29 @@ class Dados(tk.Frame):
 
     def _actualizar_creditos(self) -> None:
         self.lbl_valor_creditos.config(text=f"{self.jugador.creditos:.0f}")
+
+    def _actualizar_placa_estado(self, ronda_activa, resultado) -> None:
+        """Colorea la placa de estado según el resultado de la ronda:
+        verde si se ganó, rojo si se perdió, amarillo si hay un punto
+        establecido y a la espera del siguiente lanzamiento."""
+        punto = self.controlador.obtener_punto()
+
+        if not ronda_activa and resultado is None:
+            self.placa_estado.set_estado("LISTO PARA JUGAR", "neutral")
+            return
+
+        estado_texto = (self.controlador.obtener_estado() or "").lower()
+
+        if "gan" in estado_texto:
+            self.placa_estado.set_estado(f"¡GANASTE! ({resultado.suma})" if resultado else "¡GANASTE!", "ganada")
+        elif "perd" in estado_texto:
+            self.placa_estado.set_estado(f"PERDISTE ({resultado.suma})" if resultado else "PERDISTE", "perdida")
+        elif punto:
+            self.placa_estado.set_estado(f"PUNTO: {punto}", "punto")
+        else:
+            self.placa_estado.set_estado(
+                self.controlador.obtener_estado() or "—", "neutral"
+            )
 
 
 if __name__ == "__main__":

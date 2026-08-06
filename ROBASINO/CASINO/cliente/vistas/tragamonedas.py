@@ -1,14 +1,19 @@
 import math
+import os
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import messagebox
 
-from vistas.casino_com import Jugador, JuegoBase
+from vistas.casino_com import Jugador
 from controladores.controlador_tragamonedas import (
     ControladorTragamonedas,
     APUESTA_MINIMA,
     APUESTA_MAXIMA,
     SIMBOLOS,
     SIMBOLOS_IMAGENES,
+)
+from modelos.modelo_tragamonedas import (
+    NOMBRES_SIMBOLOS,
+    PREMIOS_A_SIMBOLOS,
 )
 
 try:
@@ -23,14 +28,25 @@ COLOR_BG = "#01150c"
 COLOR_PANEL = "#0d2818"
 COLOR_TEXTO = "#4dfa66"
 COLOR_TEXTO_SEC = "#8fdba0"
-COLOR_RODILLO_BG = "#062012"
+COLOR_RODILLO_BG = "#050F0A"      # casi negro: más contraste para las frutas
 COLOR_GANANCIA = "#7CFF9E"
 COLOR_PERDIDA = "#ff6b6b"
-COLOR_PAYLINE = "#ffd54f"
+COLOR_PAYLINE = "#FFD700"         # dorado encendido: marco de la línea de pago
+COLOR_PAYLINE_HOVER = "#ffe770"
 COLOR_PAYLINE_GLOW = "#8a6d1f"
 COLOR_METAL_CLARO = "#3f5c4a"
 COLOR_METAL_MEDIO = "#25392d"
 COLOR_SOMBRA = "#000000"
+COLOR_FILA_OSCURA = "#000000"     # overlay (con stipple) para atenuar filas fuera de la payline
+
+# Botón "GIRAR": metálico dorado/ámbar en vez del verde neón, más acorde
+# con el resto de la paleta dorada de la interfaz.
+COLOR_BTN_GIRAR = "#c9a227"
+COLOR_BTN_GIRAR_HOVER = "#e6c34f"
+COLOR_BTN_GIRAR_TEXTO = "#1a1207"
+
+# Imagen de fondo (fieltro verde), la misma que en dados.py.
+NOMBRE_IMAGEN_FONDO = "FondoDados.png"
 
 FILAS_VISIBLES = 3
 ALTO_SIMBOLO_MIN = 90
@@ -38,6 +54,12 @@ ALTO_SIMBOLO_MAX = 280
 
 MARGEN_FLECHA = 70
 SEPARACION_RODILLOS = 40
+PASO_APUESTA = 10  # incremento del stepper de apuesta (-/+)
+
+# Debounce del resize: al empaquetarse dentro de la ventana del menú, el
+# tamaño lo controla menu_principal.py — acá solo recalculamos el layout
+# interno de los rodillos cuando cambia el tamaño disponible.
+RETARDO_RESIZE_MS = 120  # no recalcular en cada pixel de arrastre
 
 # Animación (sin cambios respecto a la versión anterior)
 INTERVALO_ANIMACION_MS = 25
@@ -49,6 +71,130 @@ FRAMES_FRENADO_EXTRA = 4
 MIN_VUELTAS_FRENADO = 3
 FRAMES_REBOTE = 9
 PROFUNDIDAD_REBOTE_RATIO = 0.08
+
+
+def _localizar_imagen_fondo() -> "str | None":
+    """Busca FondoDados.png en la carpeta 'recursos' del proyecto.
+
+    Este archivo (tragamonedas.py) vive en CASINO/cliente/vistas/, y la
+    imagen en CASINO/cliente/recursos/FondoDados.png — un nivel arriba de
+    'vistas' y luego dentro de 'recursos'. Se dejan además un par de rutas
+    alternativas por si se reorganiza el proyecto, para no romper la app
+    si no la encuentra."""
+    base = os.path.dirname(os.path.abspath(__file__))  # .../CASINO/cliente/vistas
+    raiz_cliente = os.path.dirname(base)                # .../CASINO/cliente
+    candidatos = [
+        os.path.join(raiz_cliente, "recursos", NOMBRE_IMAGEN_FONDO),
+        os.path.join(base, NOMBRE_IMAGEN_FONDO),
+        os.path.join(base, "recursos", NOMBRE_IMAGEN_FONDO),
+        os.path.join(base, "assets", NOMBRE_IMAGEN_FONDO),
+        os.path.join(base, "imagenes", NOMBRE_IMAGEN_FONDO),
+    ]
+    for ruta in candidatos:
+        if os.path.isfile(ruta):
+            return ruta
+    return None
+
+
+def rect_redondeado(canvas: tk.Canvas, x1, y1, x2, y2, radio=18, **kwargs):
+    """Dibuja un rectángulo con esquinas redondeadas (mismo helper que en
+    dados.py: Tkinter no lo soporta nativamente)."""
+    puntos = [
+        x1 + radio, y1, x2 - radio, y1, x2, y1, x2, y1 + radio,
+        x2, y2 - radio, x2, y2, x2 - radio, y2, x1 + radio, y2,
+        x1, y2, x1, y2 - radio, x1, y1 + radio, x1, y1,
+    ]
+    return canvas.create_polygon(puntos, smooth=True, **kwargs)
+
+
+class BotonRedondeado(tk.Canvas):
+    """Botón con esquinas redondeadas y hover, dibujado sobre un Canvas
+    (igual patrón que en dados.py, con la paleta de tragamonedas)."""
+
+    def __init__(self, master, texto, comando, ancho=220, alto=56, radio=26,
+                 fuente=("Helvetica", 16, "bold"),
+                 color_fondo=None, color_fondo_hover=None, color_texto=None):
+        super().__init__(master, width=ancho, height=alto,
+                          bg=master["bg"], highlightthickness=0, bd=0)
+        self.comando = comando
+        self.activo = True
+        # Colores personalizables por instancia (p. ej. el botón GIRAR usa
+        # un dorado metálico en vez del verde por defecto).
+        self._color_fondo = color_fondo or COLOR_TEXTO
+        self._color_fondo_hover = color_fondo_hover or COLOR_TEXTO_SEC
+        self._color_texto = color_texto or COLOR_BG
+        self._fondo = rect_redondeado(self, 1, 1, ancho - 1, alto - 1, radio,
+                                       fill=self._color_fondo, outline="")
+        self._texto = self.create_text(ancho / 2, alto / 2, text=texto,
+                                        fill=self._color_texto, font=fuente)
+        self.bind("<Button-1>", self._al_hacer_clic)
+        self.bind("<Enter>", lambda e: self._hover(True))
+        self.bind("<Leave>", lambda e: self._hover(False))
+
+    def _hover(self, dentro: bool) -> None:
+        if self.activo:
+            self.itemconfig(self._fondo, fill=self._color_fondo_hover if dentro else self._color_fondo)
+
+    def _al_hacer_clic(self, _evento) -> None:
+        if self.activo and self.comando:
+            self.comando()
+
+    def set_texto(self, texto: str) -> None:
+        self.itemconfig(self._texto, text=texto)
+
+    def set_estado(self, activo: bool) -> None:
+        self.activo = activo
+        self.itemconfig(self._fondo, fill=self._color_fondo if activo else COLOR_METAL_CLARO)
+        self.itemconfig(self._texto, fill=self._color_texto if activo else COLOR_TEXTO_SEC)
+
+
+class BotonCircular(tk.Canvas):
+    """Botón circular tipo 'ficha' para el stepper de apuesta (-/+), mismo
+    patrón que en dados.py, en vez del ttk.Spinbox anterior."""
+
+    def __init__(self, master, texto, comando, diametro=38,
+                 fuente=("Helvetica", 17, "bold")):
+        super().__init__(master, width=diametro, height=diametro,
+                          bg=master["bg"], highlightthickness=0, bd=0)
+        self.comando = comando
+        self.activo = True
+        self._circulo = self.create_oval(1, 1, diametro - 1, diametro - 1,
+                                          fill=COLOR_PAYLINE, outline="")
+        self._texto = self.create_text(diametro / 2, diametro / 2, text=texto,
+                                        fill=COLOR_BG, font=fuente)
+        self.bind("<Button-1>", self._al_hacer_clic)
+        self.bind("<Enter>", lambda e: self._hover(True))
+        self.bind("<Leave>", lambda e: self._hover(False))
+
+    def _hover(self, dentro: bool) -> None:
+        if self.activo:
+            self.itemconfig(self._circulo, fill=COLOR_PAYLINE_HOVER if dentro else COLOR_PAYLINE)
+
+    def _al_hacer_clic(self, _evento) -> None:
+        if self.activo and self.comando:
+            self.comando()
+
+    def set_estado(self, activo: bool) -> None:
+        self.activo = activo
+        self.itemconfig(self._circulo, fill=COLOR_PAYLINE if activo else COLOR_METAL_MEDIO)
+        self.itemconfig(self._texto, fill=COLOR_BG if activo else COLOR_TEXTO_SEC)
+
+
+class VisorApuesta(tk.Canvas):
+    """Pastilla que muestra el monto de apuesta seleccionado, entre los dos
+    botones circulares del stepper (mismo patrón que en dados.py)."""
+
+    def __init__(self, master, texto_inicial, ancho=110, alto=44, radio=20,
+                 fuente=("Consolas", 17, "bold")):
+        super().__init__(master, width=ancho, height=alto,
+                          bg=master["bg"], highlightthickness=0, bd=0)
+        rect_redondeado(self, 1, 1, ancho - 1, alto - 1, radio,
+                         fill=COLOR_RODILLO_BG, outline=COLOR_PAYLINE, width=2)
+        self._texto = self.create_text(ancho / 2, alto / 2, text=texto_inicial,
+                                        fill=COLOR_PAYLINE, font=fuente)
+
+    def set_valor(self, texto: str) -> None:
+        self.itemconfig(self._texto, text=texto)
 
 
 class CargadorImagenes:
@@ -249,6 +395,7 @@ class RenderizadorTragamonedas:
         "cabinet",
         "ventana_rodillo",
         "simbolo",
+        "fila_oscura",
         "payline",
         "flecha",
         "glow",
@@ -316,13 +463,28 @@ class RenderizadorTragamonedas:
             ]
             self._ids_simbolos.append(ids_slots)
 
+            # Filas fuera de la línea de pago (arriba/abajo): se atenúan
+            # levemente con un overlay semitransparente (stipple), para que
+            # la fila central resalte más por contraste.
+            self.canvas.create_rectangle(
+                x, y, x + ancho, y + alto,
+                fill=COLOR_FILA_OSCURA, outline="", stipple="gray25",
+                tags=("fila_oscura",),
+            )
+            self.canvas.create_rectangle(
+                x, y + alto * 2, x + ancho, y + alto * 3,
+                fill=COLOR_FILA_OSCURA, outline="", stipple="gray25",
+                tags=("fila_oscura",),
+            )
+
+            # Línea de pago (fila central): marco dorado encendido.
             id_glow = self.canvas.create_rectangle(
                 x, y + alto, x + ancho, y + alto * 2,
                 outline=COLOR_PAYLINE_GLOW, width=6, tags=("glow",),
             )
             id_payline = self.canvas.create_rectangle(
                 x, y + alto, x + ancho, y + alto * 2,
-                outline=COLOR_PAYLINE, width=3, tags=("payline",),
+                outline=COLOR_PAYLINE, width=4, tags=("payline",),
             )
             self._ids_glow.append(id_glow)
             self._ids_payline.append(id_payline)
@@ -390,20 +552,24 @@ class RenderizadorTragamonedas:
         self.canvas.delete(item_id)
 
 
-class vistaTragamonedas(JuegoBase):
-    """Vista pura: construye la ventana y traduce eventos de UI en
-    llamadas al controlador. No contiene lógica de juego."""
+class vistaTragamonedas(tk.Frame):
+    """Vista del juego de Tragamonedas. Mismo patrón que Dados: un Frame
+    que se empaqueta directamente en la ventana del menú principal, en
+    vez de abrir una ventana (Toplevel) propia."""
 
-    def __init__(self, jugador: Jugador, ventana_padre: tk.Tk):
-        super().__init__(jugador, "Tragamonedas")
-
-        self._ventana_padre = ventana_padre
+    def __init__(self, jugador: Jugador, master: tk.Tk):
+        super().__init__(
+            master, bg=COLOR_BG,
+            highlightbackground=COLOR_METAL_CLARO, highlightthickness=3,
+        )
+        self.master = master
+        self.jugador = jugador
         self._controlador = ControladorTragamonedas(jugador)
 
         self._var_apuesta: tk.IntVar | None = None
         self._var_creditos: tk.StringVar | None = None
         self._var_ultimo_premio: tk.StringVar | None = None
-        self._btn_girar: ttk.Button | None = None
+        self._btn_girar: "BotonRedondeado | None" = None
 
         self._imagenes = CargadorImagenes(SIMBOLOS_IMAGENES)
         self._rodillos: list[Rodillo] = [Rodillo(SIMBOLOS, indice=i) for i in range(3)]
@@ -417,58 +583,44 @@ class vistaTragamonedas(JuegoBase):
         self._mensaje_pendiente: str | None = None
         self._rodillos_terminados: set[int] = set()
 
-        self._construir_ventana()
+        self.pack(fill="both", expand=True)
 
-        self._ventana.update_idletasks()
+        # ------------------------------------------------------------
+        # Canvas de fondo (fieltro), mismo patrón que en dados.py: ocupa
+        # toda la ventana y va detrás de todo lo demás. El resto de los
+        # paneles se crea después (más abajo, en _construir_layout), por
+        # lo que Tkinter los apila automáticamente por encima.
+        # ------------------------------------------------------------
+        self._imagen_fondo_pil = None
+        self._imagen_fondo_tk = None
+        self._id_imagen_fondo = None
+        self._fondo_resize_after_id = None
+
+        self.canvas_fondo = tk.Canvas(self, highlightthickness=0, bd=0, bg=COLOR_BG)
+        self.canvas_fondo.place(x=0, y=0, relwidth=1, relheight=1)
+        self._cargar_imagen_fondo()
+        self.canvas_fondo.bind("<Configure>", self._on_configure_fondo)
+
+        self._construir_layout()
+
+        self.update_idletasks()
         self._recalcular_dimensiones(
             self._gabinete_contenedor.winfo_height(),
             self._gabinete_contenedor.winfo_width(),
         )
 
-    def _construir_ventana(self) -> None:
-        self._ventana = tk.Toplevel(self._ventana_padre)
-        self._ventana.title("ROBASINO - Tragamonedas")
-        self._ventana.resizable(True, True)
-        self._ventana.minsize(900, 640)
-        self._ventana.configure(
-            bg=COLOR_BG, highlightbackground=COLOR_METAL_CLARO, highlightthickness=3,
-        )
-
-        self._ventana.update_idletasks()
-        ancho, alto = 1400, 900
-        ancho_pantalla = self._ventana.winfo_screenwidth()
-        alto_pantalla = self._ventana.winfo_screenheight()
-        x = max(0, (ancho_pantalla - ancho) // 2)
-        y = max(0, (alto_pantalla - alto) // 2)
-        self._ventana.geometry(f"{ancho}x{alto}+{x}+{y}")
-
-        self._configurar_estilos()
-
-        self._ventana.columnconfigure(0, weight=1)
-        self._ventana.rowconfigure(0, weight=2)
-        self._ventana.rowconfigure(1, weight=6)
-        self._ventana.rowconfigure(2, weight=2)
+    def _construir_layout(self) -> None:
+        # El tamaño y proporción de la ventana ya los administra
+        # menu_principal.py sobre self.master — acá solo se arma la
+        # disposición interna en 3 filas (header / gabinete / panel).
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(0, weight=2)
+        self.rowconfigure(1, weight=6)
+        self.rowconfigure(2, weight=2)
 
         self._construir_header()
         self._construir_gabinete()
         self._construir_panel_inferior()
-
-    def _configurar_estilos(self) -> None:
-        estilo = ttk.Style()
-        estilo.theme_use("clam")
-        estilo.configure(
-            "Girar.TButton",
-            font=("Helvetica", 22, "bold"),
-            padding=(50, 26),
-            background=COLOR_TEXTO,
-            foreground=COLOR_BG,
-            borderwidth=0,
-        )
-        estilo.map(
-            "Girar.TButton",
-            background=[("active", COLOR_TEXTO_SEC), ("disabled", COLOR_METAL_CLARO)],
-            foreground=[("disabled", COLOR_TEXTO_SEC)],
-        )
 
     def _crear_panel(self, parent, **kw):
         """Marco 'metal cepillado': realzado por fuera, hundido por dentro."""
@@ -480,7 +632,7 @@ class vistaTragamonedas(JuegoBase):
         return sombra, interior
 
     def _construir_header(self) -> None:
-        sombra, interior = self._crear_panel(self._ventana)
+        sombra, interior = self._crear_panel(self)
         sombra.grid(row=0, column=0, sticky="nsew", padx=40, pady=(20, 6))
         interior.columnconfigure(0, weight=1)
         interior.rowconfigure(0, weight=1)
@@ -498,8 +650,98 @@ class vistaTragamonedas(JuegoBase):
             font=("Helvetica", 13, "bold"), fg=COLOR_TEXTO_SEC, bg=COLOR_PANEL,
         ).grid(row=1, column=0, sticky="n", pady=(4, 0))
 
+        # Botón de ayuda (❓), esquina superior derecha — mismo patrón que
+        # en dados.py: no ensucia la pantalla si el jugador ya sabe jugar.
+        self._panel_reglas_visible = False
+        self.btn_ayuda = BotonCircular(
+            interior, "❓", self._alternar_panel_reglas, diametro=32,
+            fuente=("Helvetica", 14, "bold"),
+        )
+        self.btn_ayuda.place(relx=1.0, x=-14, y=14, anchor="ne")
+
+        # Botón para volver al menú principal, esquina superior izquierda.
+        self.btn_volver = BotonRedondeado(
+            interior, "← Menú", self._volver_menu, ancho=110, alto=32, radio=16,
+            fuente=("Helvetica", 12, "bold"),
+        )
+        self.btn_volver.place(x=14, y=14, anchor="nw")
+
+        self._construir_panel_reglas()
+
+    # ------------------------------------------------------------------
+    # Panel de reglas (overlay desplegable, para quien no sepa jugar)
+    # ------------------------------------------------------------------
+
+    def _construir_panel_reglas(self) -> None:
+        """Construye el panel de ayuda como overlay sobre toda la ventana
+        (usa place() en vez de pack/grid para no alterar el layout fijo
+        del gabinete). Arranca oculto; _alternar_panel_reglas lo muestra
+        centrado, con lift() para quedar por encima de los rodillos."""
+        self.panel_reglas = tk.Frame(self, bg=COLOR_SOMBRA)
+
+        marco = tk.Frame(
+            self.panel_reglas, bg=COLOR_PANEL,
+            highlightbackground=COLOR_PAYLINE, highlightthickness=3,
+        )
+        marco.pack(padx=3, pady=3)
+
+        cabecera = tk.Frame(marco, bg=COLOR_PANEL)
+        cabecera.pack(fill="x", padx=22, pady=(18, 6))
+        tk.Label(
+            cabecera, text="¿Cómo se juega?", font=("Helvetica", 17, "bold"),
+            fg=COLOR_PAYLINE, bg=COLOR_PANEL,
+        ).pack(side="left")
+        BotonCircular(
+            cabecera, "✕", self._alternar_panel_reglas, diametro=26,
+            fuente=("Helvetica", 12, "bold"),
+        ).pack(side="right")
+
+        reglas = (
+            "• Elige tu apuesta con los botones – / + y presiona GIRAR.\n"
+            "• Si los 3 rodillos caen en el mismo símbolo, ganas.\n"
+            "• El premio = apuesta × multiplicador del símbolo ganador.\n"
+            "• Cualquier otra combinación no paga nada.\n"
+            "• Cuanto más raro el símbolo, mayor el premio."
+        )
+        tk.Label(
+            marco, text=reglas, bg=COLOR_PANEL, fg=COLOR_TEXTO_SEC,
+            font=("Helvetica", 11), justify="left", anchor="w",
+        ).pack(anchor="w", padx=22, pady=(0, 12), fill="x")
+
+        tk.Label(
+            marco, text="Pagos por 3 símbolos iguales:",
+            font=("Helvetica", 12, "bold"), fg=COLOR_PAYLINE, bg=COLOR_PANEL,
+        ).pack(anchor="w", padx=22, pady=(0, 6))
+
+        tabla = tk.Frame(marco, bg=COLOR_PANEL)
+        tabla.pack(fill="x", padx=22)
+
+        for multiplicador in sorted(PREMIOS_A_SIMBOLOS):
+            simbolo = PREMIOS_A_SIMBOLOS[multiplicador][0]
+            nombre = NOMBRES_SIMBOLOS[simbolo]
+            fila = tk.Frame(tabla, bg=COLOR_PANEL)
+            fila.pack(fill="x", pady=2)
+            tk.Label(
+                fila, text=f"{nombre}  ×3", font=("Helvetica", 11),
+                fg=COLOR_TEXTO_SEC, bg=COLOR_PANEL, anchor="w",
+            ).pack(side="left")
+            tk.Label(
+                fila, text=f"paga x{multiplicador}", font=("Helvetica", 11, "bold"),
+                fg=COLOR_GANANCIA, bg=COLOR_PANEL, anchor="e",
+            ).pack(side="right")
+
+        tk.Frame(marco, bg=COLOR_PANEL, height=8).pack()
+
+    def _alternar_panel_reglas(self) -> None:
+        if self._panel_reglas_visible:
+            self.panel_reglas.place_forget()
+        else:
+            self.panel_reglas.place(relx=0.5, rely=0.5, anchor="center")
+            self.panel_reglas.lift()
+        self._panel_reglas_visible = not self._panel_reglas_visible
+
     def _construir_gabinete(self) -> None:
-        contenedor = tk.Frame(self._ventana, bg=COLOR_BG)
+        contenedor = tk.Frame(self, bg=COLOR_BG)
         contenedor.grid(row=1, column=0, sticky="nsew", padx=40, pady=10)
         contenedor.columnconfigure(0, weight=1)
         contenedor.rowconfigure(0, weight=1)
@@ -517,14 +759,72 @@ class vistaTragamonedas(JuegoBase):
         self._canvas_maestro.pack(padx=20, pady=20)
         self._renderizador = RenderizadorTragamonedas(self._canvas_maestro)
 
-        self._ventana.bind("<Configure>", self._on_resize_ventana)
+        # Se escucha el resize de la ventana raíz (mismo patrón que
+        # dados.py), no el de este Frame: así se recalcula el layout de
+        # los rodillos cuando el jugador redimensiona la ventana del menú.
+        # add="+" evita pisar el binding propio de MenuPrincipal.
+        self._id_bind_configure = self.master.bind(
+            "<Configure>", self._on_resize_ventana, add="+"
+        )
+
+    # ------------------------------------------------------------------
+    # Fondo de fieltro (Canvas principal) — mismo mecanismo que dados.py
+    # ------------------------------------------------------------------
+
+    def _cargar_imagen_fondo(self) -> None:
+        if not _PIL_DISPONIBLE:
+            return  # sin Pillow: se mantiene el color sólido COLOR_BG
+        ruta = _localizar_imagen_fondo()
+        if ruta is None:
+            return
+        try:
+            self._imagen_fondo_pil = Image.open(ruta).convert("RGB")
+        except Exception:
+            self._imagen_fondo_pil = None
+
+    def _on_configure_fondo(self, evento) -> None:
+        if self._imagen_fondo_pil is None:
+            return
+        if self._fondo_resize_after_id is not None:
+            self.master.after_cancel(self._fondo_resize_after_id)
+        # Debounce: evita re-escalar la imagen en cada pixel de arrastre.
+        self._fondo_resize_after_id = self.master.after(
+            RETARDO_RESIZE_MS, lambda: self._aplicar_imagen_fondo(evento.width, evento.height)
+        )
+
+    def _aplicar_imagen_fondo(self, ancho: int, alto: int) -> None:
+        self._fondo_resize_after_id = None
+        if ancho <= 1 or alto <= 1 or self._imagen_fondo_pil is None:
+            return
+
+        # Ajuste tipo "cover": escala la imagen para cubrir todo el
+        # Canvas y recorta el sobrante, sin deformarla.
+        im_ancho, im_alto = self._imagen_fondo_pil.size
+        escala = max(ancho / im_ancho, alto / im_alto)
+        nuevo_ancho = max(1, math.ceil(im_ancho * escala))
+        nuevo_alto = max(1, math.ceil(im_alto * escala))
+        redimensionada = self._imagen_fondo_pil.resize(
+            (nuevo_ancho, nuevo_alto), Image.LANCZOS
+        )
+        x0 = (nuevo_ancho - ancho) // 2
+        y0 = (nuevo_alto - alto) // 2
+        recortada = redimensionada.crop((x0, y0, x0 + ancho, y0 + alto))
+
+        self._imagen_fondo_tk = ImageTk.PhotoImage(recortada)
+        if self._id_imagen_fondo is None:
+            self._id_imagen_fondo = self.canvas_fondo.create_image(
+                0, 0, anchor="nw", image=self._imagen_fondo_tk
+            )
+        else:
+            self.canvas_fondo.itemconfig(self._id_imagen_fondo, image=self._imagen_fondo_tk)
+            self.canvas_fondo.coords(self._id_imagen_fondo, 0, 0)
 
     def _on_resize_ventana(self, evento) -> None:
-        if evento.widget is not self._ventana:
+        if evento.widget is not self.master:
             return
         if self._resize_job is not None:
-            self._ventana.after_cancel(self._resize_job)
-        self._resize_job = self._ventana.after(80, self._recalcular_dimensiones_actuales)
+            self.master.after_cancel(self._resize_job)
+        self._resize_job = self.master.after(RETARDO_RESIZE_MS, self._recalcular_dimensiones_actuales)
 
     def _recalcular_dimensiones_actuales(self) -> None:
         self._recalcular_dimensiones(
@@ -582,7 +882,7 @@ class vistaTragamonedas(JuegoBase):
         self._renderizador.redibujar_frame(self._rodillos)
 
     def _construir_panel_inferior(self) -> None:
-        sombra, interior = self._crear_panel(self._ventana)
+        sombra, interior = self._crear_panel(self)
         sombra.grid(row=2, column=0, sticky="nsew", padx=40, pady=(6, 24))
         interior.columnconfigure(0, weight=1)
         interior.rowconfigure(0, weight=1)
@@ -601,7 +901,7 @@ class vistaTragamonedas(JuegoBase):
         self._var_creditos = tk.StringVar(value=str(self.jugador.creditos))
         self._var_ultimo_premio = tk.StringVar(value="0")
 
-        self._crear_indicador(marco_info, "CREDITOS", self._var_creditos, COLOR_TEXTO).grid(
+        self._crear_indicador(marco_info, "CREDITOS", self._var_creditos, COLOR_PAYLINE).grid(
             row=0, column=0, sticky="nsew", padx=8,
         )
         self._crear_indicador(marco_info, "APUESTA", self._var_apuesta, COLOR_PAYLINE).grid(
@@ -634,20 +934,57 @@ class vistaTragamonedas(JuegoBase):
         tk.Label(
             marco_apuesta, text="Apuesta:", font=("Helvetica", 14),
             fg=COLOR_TEXTO_SEC, bg=COLOR_PANEL,
-        ).pack(side="left", padx=(0, 8))
-        ttk.Spinbox(
-            marco_apuesta, from_=APUESTA_MINIMA, to=APUESTA_MAXIMA, increment=10,
-            textvariable=self._var_apuesta, width=8, font=("Helvetica", 14),
-        ).pack(side="left")
+        ).pack(side="left", padx=(0, 10))
+
+        self._btn_apuesta_menos = BotonCircular(
+            marco_apuesta, "–", lambda: self._cambiar_apuesta(-PASO_APUESTA)
+        )
+        self._btn_apuesta_menos.pack(side="left", padx=(0, 8))
+
+        self._visor_apuesta = VisorApuesta(marco_apuesta, str(self._var_apuesta.get()))
+        self._visor_apuesta.pack(side="left")
+
+        self._btn_apuesta_mas = BotonCircular(
+            marco_apuesta, "+", lambda: self._cambiar_apuesta(PASO_APUESTA)
+        )
+        self._btn_apuesta_mas.pack(side="left", padx=(8, 10))
+
         tk.Label(
             marco_apuesta, text=f"({APUESTA_MINIMA}-{APUESTA_MAXIMA})",
             font=("Helvetica", 11), fg=COLOR_TEXTO_SEC, bg=COLOR_PANEL,
-        ).pack(side="left", padx=(8, 0))
+        ).pack(side="left")
 
-        self._btn_girar = ttk.Button(
-            marco, text="🎰  GIRAR", command=self._iniciar_giro, style="Girar.TButton",
+        self._btn_girar = BotonRedondeado(
+            marco, "🎰  GIRAR", self._iniciar_giro,
+            color_fondo=COLOR_BTN_GIRAR,
+            color_fondo_hover=COLOR_BTN_GIRAR_HOVER,
+            color_texto=COLOR_BTN_GIRAR_TEXTO,
         )
         self._btn_girar.grid(row=0, column=1, sticky="e")
+
+    def _volver_menu(self) -> None:
+        if not self._btn_girar.activo:
+            return  # no se puede salir a mitad de un giro
+
+        # Se cancela cualquier resize pendiente y se desengancha SOLO el
+        # binding propio (por funcid), sin tocar el que usa MenuPrincipal
+        # para reescalarse a sí mismo.
+        if self._resize_job is not None:
+            self.master.after_cancel(self._resize_job)
+            self._resize_job = None
+        if self._fondo_resize_after_id is not None:
+            self.master.after_cancel(self._fondo_resize_after_id)
+            self._fondo_resize_after_id = None
+        self.master.unbind("<Configure>", self._id_bind_configure)
+
+        self.destroy()
+
+    def _cambiar_apuesta(self, delta: int) -> None:
+        if not self._btn_girar.activo:
+            return  # bloqueado mientras hay un giro en curso
+        nuevo_valor = max(APUESTA_MINIMA, min(APUESTA_MAXIMA, self._var_apuesta.get() + delta))
+        self._var_apuesta.set(nuevo_valor)
+        self._visor_apuesta.set_valor(str(nuevo_valor))
 
     def _iniciar_giro(self) -> None:
         monto = self._var_apuesta.get()
@@ -660,7 +997,10 @@ class vistaTragamonedas(JuegoBase):
             )
             return
 
-        self._btn_girar.config(state="disabled")
+        self._btn_girar.set_estado(False)
+        self._btn_apuesta_menos.set_estado(False)
+        self._btn_apuesta_mas.set_estado(False)
+        self.btn_volver.set_estado(False)
         self._simbolos_finales = None
         self._mensaje_pendiente = None
         self._premio_pendiente = 0
@@ -685,7 +1025,7 @@ class vistaTragamonedas(JuegoBase):
         sigue = rodillo.tick(simbolo_final)
         self._renderizador.actualizar_rodillo(rodillo)
         if sigue:
-            self._ventana.after(INTERVALO_ANIMACION_MS, self._programar_tick, rodillo)
+            self.after(INTERVALO_ANIMACION_MS, self._programar_tick, rodillo)
             return
 
         # Este rodillo ya terminó de animarse. No asumimos que el índice
@@ -729,7 +1069,7 @@ class vistaTragamonedas(JuegoBase):
                 self._renderizador.actualizar_rodillo(rodillo)
 
     def _on_resultado(self, mensaje: str, resultado_final: tuple, premio: int) -> None:
-        self._ventana.after(0, self._registrar_resultado, mensaje, resultado_final, premio)
+        self.after(0, self._registrar_resultado, mensaje, resultado_final, premio)
 
     def _registrar_resultado(self, mensaje: str, resultado_final: tuple, premio: int) -> None:
         self._mensaje_pendiente = mensaje
@@ -742,15 +1082,19 @@ class vistaTragamonedas(JuegoBase):
 
         self._var_ultimo_premio.set(str(premio))
         self._var_creditos.set(str(self.jugador.creditos))
-        self._btn_girar.config(state="normal")
+        self._btn_girar.set_estado(True)
+        self._btn_apuesta_menos.set_estado(True)
+        self._btn_apuesta_mas.set_estado(True)
+        self.btn_volver.set_estado(True)
 
         if gano:
             self._mostrar_popup_ganancia(premio)
 
     def _mostrar_popup_ganancia(self, premio: int) -> None:
-        popup = tk.Toplevel(self._ventana)
+        ventana_raiz = self.winfo_toplevel()
+        popup = tk.Toplevel(ventana_raiz)
         popup.overrideredirect(True)
-        popup.transient(self._ventana)
+        popup.transient(ventana_raiz)
         popup.configure(bg=COLOR_PAYLINE)
 
         marco = tk.Frame(
@@ -779,7 +1123,7 @@ class vistaTragamonedas(JuegoBase):
         except tk.TclError:
             pass
 
-        self._ventana.after(2500, lambda p=popup: self._cerrar_popup(p))
+        self.after(2500, lambda p=popup: self._cerrar_popup(p))
 
     def _desvanecer_entrada(self, popup: tk.Toplevel, alpha: float) -> None:
         if not popup.winfo_exists():
