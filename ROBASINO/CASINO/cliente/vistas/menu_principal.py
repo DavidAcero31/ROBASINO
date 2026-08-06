@@ -3,16 +3,17 @@ from PIL import Image, ImageTk
 from vistas.ruleta import Ruleta
 from vistas.casino_com import Jugador
 from vistas.tragamonedas import vistaTragamonedas
-from vistas.dados import Dados
+from vistas.client import BlackjackClient
 import os
 
 
 class MenuPrincipal:
 
-    def __init__(self, root, jugador):
+    def __init__(self, root, jugador, conexion):
 
         self.root = root
         self.jugador = jugador
+        self.conexion = conexion  # socket ya autenticado, reutilizado por todos los juegos
 
         self.root.title("ROBASINO")
         self.root.geometry("1366x768")
@@ -92,7 +93,7 @@ class MenuPrincipal:
 
         tk.Label(
             self.frame_perfil,
-            text="Nombre:  {self.jugador.nombre}",
+            text=f"Nombre:  {self.jugador.usuario}",
             bg="#001a00",
             fg="#66ff66",
             font=("Arial", 11)
@@ -100,7 +101,7 @@ class MenuPrincipal:
 
         tk.Label(
             self.frame_perfil,
-            text="Nivel: {self.jugador.nivel}",
+            text=f"Nivel: {self.jugador.nivel}",
             bg="#001a00",
             fg="#66ff66",
             font=("Arial", 11)
@@ -108,7 +109,7 @@ class MenuPrincipal:
 
         tk.Label(
             self.frame_perfil,
-            text="País: Colombia",
+            text=f"País: {self.jugador.pais}",
             bg="#001a00",
             fg="#66ff66",
             font=("Arial", 11)
@@ -181,7 +182,7 @@ class MenuPrincipal:
 
         tk.Label(
             self.frame_info,
-            text="Créditos: ${self.jugador.creditos:,}",
+            text=f"Créditos: ${self.jugador.creditos:,}",
             bg="#001a00",
             fg="#66ff66",
             font=("Arial", 14, "bold")
@@ -198,7 +199,7 @@ class MenuPrincipal:
             ("ruleta.png", self.abrir_ruleta),
             ("info.png", self.abrir_info),
             ("tragamonedas.png", self.abrir_tragamonedas),
-            ("craps.png", self.abrir_dados)
+            ("craps.png", self.abrir_craps)
         ]
 
         self.imagenes_botones = []
@@ -244,18 +245,29 @@ class MenuPrincipal:
     # =====================================================
 
     def abrir_blackjack(self):
-        print("Abrir Blackjack")
+        # TODO: una vez que BlackjackClient acepte una conexión ya
+        # abierta (en lugar de crear la suya con self._connect()),
+        # abrir aquí pasando self.jugador y self.conexion, por ejemplo:
+        #   BlackjackClient(self.root, self.jugador, self.conexion)
+        # Mientras tanto no se abre una conexión nueva desde aquí,
+        # para no violar la regla de "una sola conexión por sesión".
+        BlackjackClient(self.root, self.jugador, self.conexion)
 
     def abrir_ruleta(self):
+        # TODO: Ruleta necesita self.jugador / self.conexion para
+        # apostar con créditos reales en lugar de datos de prueba.
         Ruleta(self.root)
 
     def abrir_info(self):
         print("Abrir Información")
 
     def abrir_tragamonedas(self):
+        # TODO: reemplazar este Jugador de prueba por self.jugador
+        # una vez que vistas/casino_com.Jugador y el jugador que
+        # entrega Login compartan la misma representación (o se
+        # adapte uno al otro). Por ahora esto NO usa créditos reales.
         jugador_prueba = Jugador("TestPlayer", creditos_iniciales=2000)
         vistaTragamonedas(jugador_prueba, self.root)
-    
-    def abrir_dados(self):
-        jugador_prueba = Jugador("TestPlayer", creditos_iniciales=2000)
-        Dados(jugador_prueba, self.root)
+
+    def abrir_craps(self):
+        print("Abrir Craps")
