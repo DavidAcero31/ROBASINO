@@ -1,6 +1,7 @@
 import tkinter as tk
 import threading, queue, random, math, os
-import json
+
+from controladores.controlador_ruleta import ControladorRuleta
 
 # ── Colores ──────────────────────────────────────────────────────
 class T:
@@ -44,118 +45,52 @@ class Wheel:
     def color_name(cls,n):
         return "Verde" if n==0 else ("Rojo" if n in cls.REDS else "Negro")
 
-    @classmethod
-    def number_at_angle(cls,wheel_angle,ball_angle):
-        arc=360/len(cls.ORDER)
-        idx=math.floor(((ball_angle-wheel_angle+arc/2)%360)/arc)%len(cls.ORDER)
-        return cls.ORDER[idx]
-
 # ── Apuestas ─────────────────────────────────────────────────────
+# Los nombres de apuesta externa ("Rojo", "1ª Doc.", etc.) son solo
+# etiquetas que la vista usa para armar botones y para mostrar lo que
+# el jugador lleva apostado. La validación y el cálculo de qué apuesta
+# gana y cuánto paga viven SOLO en el servidor (ruleta_logic.py,
+# BET_TYPES) — este mismo conjunto de nombres, replicado ahí.
 class BetManager:
-    TYPES={
-        "Rojo":   (lambda n:n!=0 and n in Wheel.REDS,2),
-        "Negro":  (lambda n:n!=0 and n not in Wheel.REDS,2),
-        "Par":    (lambda n:n!=0 and n%2==0,2),
-        "Impar":  (lambda n:n!=0 and n%2==1,2),
-        "1–18":   (lambda n:1<=n<=18,2),
-        "19–36":  (lambda n:19<=n<=36,2),
-        "1ª Doc.":(lambda n:1<=n<=12,3),
-        "2ª Doc.":(lambda n:13<=n<=24,3),
-        "3ª Doc.":(lambda n:25<=n<=36,3),
-        "Col. 1": (lambda n:n!=0 and n%3==1,3),
-        "Col. 2": (lambda n:n!=0 and n%3==2,3),
-        "Col. 3": (lambda n:n!=0 and n%3==0,3),
-    }
     def __init__(self): self.bets={}
     def place(self,k,v): self.bets[k]=self.bets.get(k,0)+v
     def total(self): return sum(self.bets.values())
     def clear(self):
         r=self.total(); self.bets.clear(); return r
-    def settle(self,num):
-        w=0
-        for k,v in self.bets.items():
-            if isinstance(k,int): w+=v*36 if k==num else 0
-            else:
-                cond,mult=self.TYPES[k]
-                if cond(num): w+=v*mult
-        self.bets.clear(); return w
 
 # ── Hilo de física ───────────────────────────────────────────────
 class SpinWorker(threading.Thread):
-    """Anima la ruleta hasta hacer que la bola caiga EXACTAMENTE en
-    target_number — el número ya decidido por el servidor. La fase 1
-    es un giro libre puramente estético; la fase 2 precalcula toda la
-    desaceleración de la rueda para saber su ángulo final de antemano,
-    y así puede llevar la bola a la posición correcta sin adivinar."""
-
-    def __init__(self, q, target_number, fps=60):
+    def __init__(self,q,fps=60):
         super().__init__(daemon=True)
-        self.q = q
-        self.dt = 1 / fps
-        self._stop = threading.Event()
-        self.target_number = target_number
-
-    def stop(self):
-        self._stop.set()
-
+        self.q=q; self.dt=1/fps; self._detener=threading.Event()
+    def stop(self): self._detener.set()
     def run(self):
-        arc = 360 / len(Wheel.ORDER)
-        target_index = Wheel.ORDER.index(self.target_number)
-        target_center = target_index * arc
-
-        # ---- Fase 1: giro libre (solo estética) ----
-        wheel_angle = 0.0
-        ball_angle = 0.0
-        wheel_speed = random.uniform(8, 12) * 60 * self.dt
-        ball_speed = -random.uniform(14, 18) * 60 * self.dt
-        free_frames = random.randint(120, 200)
-
-        for _ in range(free_frames):
-            if self._stop.is_set():
-                return
-            wheel_angle = (wheel_angle + wheel_speed) % 360
-            ball_angle = (ball_angle + ball_speed) % 360
-            wheel_speed *= 1.0005
-            ball_speed *= 1.0005
-            self.q.put(("frame", wheel_angle, ball_angle))
-            self._stop.wait(self.dt)
-
-        # ---- Fase 2: precalcular la desaceleración de la rueda ----
-        # (sin tiempos de espera todavía: es solo aritmética, no animación)
-        homing_frames = random.randint(150, 220)
-        wheel_traj = []
-        w_angle, w_speed = wheel_angle, wheel_speed
-        for _ in range(homing_frames):
-            w_angle = (w_angle + w_speed) % 360
-            w_speed *= 0.965
-            wheel_traj.append(w_angle)
-        final_wheel_angle = wheel_traj[-1]
-
-        # Ángulo EXACTO donde debe terminar la bola para caer en target_number,
-        # dado dónde terminará la rueda.
-        final_ball_angle = (final_wheel_angle + target_center) % 360
-
-        # Vueltas extra para que la caída no se vea "enganchada" desde ya.
-        extra_turns = random.randint(3, 5) * 360
-        delta = -(((ball_angle - final_ball_angle) % 360) + extra_turns)
-        start_ball_angle = ball_angle
-
-        # ---- Reproducir la fase 2 en tiempo real, con easing hacia el destino ----
-        for i in range(1, homing_frames + 1):
-            if self._stop.is_set():
-                return
-            t = i / homing_frames
-            eased = 1 - (1 - t) ** 3  # ease-out cúbico
-            ball_angle = (start_ball_angle + delta * eased) % 360
-            wheel_angle = wheel_traj[i - 1]
-            kind = "done" if i == homing_frames else "frame"
-            self.q.put((kind, wheel_angle, ball_angle))
-            if kind == "done":
-                return
-            self._stop.wait(self.dt)
+        angle=ball=0.0
+        sw=random.uniform(8,12)*60*self.dt
+        bw=random.uniform(-18,-14)*60*self.dt
+        frames=random.randint(180,300); phase="spinning"
+        while not self._detener.is_set():
+            if phase=="spinning":
+                angle+=sw; ball+=bw
+                sw=min(sw*1.004,14*60*self.dt)
+                bw=max(bw*1.004,-20*60*self.dt)
+                frames-=1
+                if frames<=0: phase="slowing"
+            else:
+                angle+=sw; ball+=bw; sw*=0.975; bw*=0.975
+                if abs(sw)<0.3:
+                    self.q.put(("done",angle%360,ball%360)); return
+            self.q.put(("frame",angle%360,ball%360))
+            self._detener.wait(self.dt)
 
 # ── UI ───────────────────────────────────────────────────────────
-class Ruleta:
+class Ruleta(tk.Frame):
+    """Se abre como un Frame que se apila sobre la ventana del menú,
+    igual que Dados y Tragamonedas (ver vistas/dados.py,
+    vistas/tragamonedas.py) — así el botón "← Menú" puede simplemente
+    destruirse a sí mismo y dejar el menú principal visible debajo, en
+    vez de reconfigurar la ventana raíz compartida como hacía antes."""
+
     W,H=1100,780
     CHIPS={5:"#1a6b1a",10:"#1a2b6b",25:"#6b1a1a",50:"#5a1a6b",100:"#6b4d00"}
     OUTER=[("1–18",T.RELIEF_LO,"1–18"),("Par",T.RELIEF_LO,"Par"),
@@ -165,111 +100,63 @@ class Ruleta:
     DOZ_LABELS=["1ª Docena  (1–12)","2ª Docena  (13–24)","3ª Docena  (25–36)"]
     COLS=["Col. 3","Col. 2","Col. 1"]
 
-    
-
-    def volver_menu(self):
-        if self._worker is not None:
-            self._worker.stop()   # detener la animación si está girando
-
-        self.root.destroy()
-
-
-    def __init__(self, parent, jugador=None, conexion=None):
-        self.parent = parent
-        self.root = tk.Toplevel(parent)        # ← ventana propia, no la principal
-
-        self.ruta_base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-        self.bets = BetManager()
+    def __init__(self, root, jugador=None, conexion=None):
+        super().__init__(root, bg=T.DEEP)
+        self.root=root; self.bets=BetManager()
+        # `jugador` / `conexion` (GestorConexion compartido) siguen el
+        # mismo patrón que Dados/Tragamonedas: esta vista nunca toca el
+        # socket directamente. Todo lo que necesite el servidor pasa
+        # por self.controlador, que se suscribe a "resultado_ruleta" /
+        # "ruleta_error" sobre la conexión compartida y desuscribe sus
+        # handlers en _volver_menu() — nunca se abre un hilo propio.
         self.jugador = jugador
-        self.sock = conexion
-        self.balance = jugador.creditos if jugador is not None else 1000
-        self.chip_val = 10
-        self.spinning = False
+        self.conexion = conexion
+        self.controlador = (
+            ControladorRuleta(conexion, jugador, self)
+            if conexion is not None else None
+        )
 
-        self._angle = self._ball_angle = 0.0
-        self._frame_q = self._worker = None
-        self._chip_btns = {}
-        self._history = []
+        # El saldo mostrado arranca en los créditos reales del jugador
+        # (autoritativos: los puso el servidor en el login/juego
+        # anterior). A partir de aquí solo se ajusta de dos formas:
+        # (a) localmente, como "reserva visual" al apostar/limpiar
+        #     fichas, sin tocar la base de datos — igual que antes de
+        #     confirmar el giro, y
+        # (b) de forma autoritativa, sobrescrito por los créditos que
+        #     devuelve el servidor en cada resultado_ruleta/ruleta_error
+        #     (ver on_resultado_servidor / on_error_servidor).
+        creditos_iniciales = getattr(jugador, "creditos", None) if jugador is not None else None
+        self.balance = creditos_iniciales if creditos_iniciales is not None else 1000
 
-        self._server_result = None
+        self.chip_val=10; self.spinning=False
+        self._angle=self._ball_angle=0.0
+        self._frame_q=self._worker=None
+        self._chip_btns={}; self._history=[]
+        # Resultado autoritativo pendiente del servidor (numero/color/
+        # premio/creditos) mientras la animación de la rueda sigue
+        # corriendo. _resolve() solo se ejecuta cuando AMBAS cosas están
+        # listas: la animación terminó Y el servidor ya contestó.
+        self._resultado_pendiente=None
+        self._animacion_lista=False
 
-        self.msg_queue = queue.Queue()
+        try:
+            root.title("Robasino — Ruleta")
+        except tk.TclError:
+            pass
 
-        self.root.title("Robasino — Ruleta")
-        self.root.configure(bg=T.DEEP)
-        self.root.resizable(False, False)
-
-        # El botón X tendrá el mismo comportamiento que "Volver"
-        self.root.protocol("WM_DELETE_WINDOW", self.volver_menu)
+        self.pack(fill="both", expand=True)
 
         self._build_bg()
-        self._build_header()
-        self._build_body()
-        self._build_history()
+        self._build_header(); self._build_body(); self._build_history()
+        self._draw_wheel(); self._draw_ball()
 
-        self._draw_wheel()
-        self._draw_ball()
-
-        if self.sock is not None:
-            threading.Thread(
-                target=self._listen_server,
-                daemon=True
-            ).start()
-
-            self.root.after(100, self._process_queue)
-
-    # ---------------- Red ----------------
-    def _listen_server(self):
-        buffer=""
-        while True:
-            try:
-                data=self.sock.recv(4096)
-                if not data:
-                    break
-                buffer+=data.decode("utf-8")
-                while "\n" in buffer:
-                    line,buffer=buffer.split("\n",1)
-                    if line.strip():
-                        msg=json.loads(line)
-                        self.msg_queue.put(("server_msg",msg))
-            except (ConnectionResetError, OSError):
-                break
-
-    def _send(self,msg):
-        if self.sock:
-            try:
-                self.sock.sendall((json.dumps(msg)+"\n").encode("utf-8"))
-            except OSError:
-                pass
-
-    def _process_queue(self):
-        try:
-            while True:
-                kind,payload=self.msg_queue.get_nowait()
-                if kind=="server_msg":
-                    self._handle_server_msg(payload)
-        except queue.Empty:
-            pass
-        self.root.after(100,self._process_queue)
-
-    def _handle_server_msg(self,msg):
-        accion=msg.get("accion")
-        if accion=="resultado_ruleta":
-            self._server_result=(msg["numero"],msg["premio"],msg["creditos"])
-            self._iniciar_animacion(msg["numero"])
-        elif accion=="ruleta_error":
-            self.spinning=False
-            self.spin_btn.config(state="normal",bg=T.LEAF)
-            self.result_sub.config(text=msg.get("mensaje","Error al girar."),fg="#ff4444")
-            # El servidor nunca llegó a cobrar: no tocamos self.balance,
-            # pero limpiamos las apuestas visualmente para evitar reintentos
-            # con fichas que ya no reflejan lo que el servidor sabe.
-            self.balance += self.bets.clear()
-            self._refresh()   
     # ── Fondo ────────────────────────────────────────────────────
     def _build_bg(self):
-        self.cv=tk.Canvas(self.root,width=self.W,height=self.H,
+        # El Canvas cuelga de `self` (el Frame de Ruleta), no de
+        # `self.root` (la ventana compartida con el menú): así, al
+        # destruir este Frame en _volver_menu(), el canvas y todo lo
+        # que dibuja se van con él, sin tocar nada del menú principal.
+        self.cv=tk.Canvas(self,width=self.W,height=self.H,
                         bg=T.DEEP,highlightthickness=0)
         self.cv.pack(fill="both",expand=True)
 
@@ -279,13 +166,7 @@ class Ruleta:
             # ruta_fondo = self.base_path / "recursos" / "fondo_principal.png"
             
             # img = Image.open(ruta_fondo)
-            ruta_fondo = os.path.join(
-                self.ruta_base,
-                "recursos",
-                "fondo_principal.png"
-            )
-
-            img = Image.open(ruta_fondo).convert("RGB")
+            img = Image.open("recursos/fondo_principal.png").convert("RGB")
             # Recorte centrado para ajustar al tamaño de la ventana
             iw, ih = img.size
             tr = self.W / self.H
@@ -313,21 +194,17 @@ class Ruleta:
         self._panel(20,16,self.W-40,64)
         hdr=tk.Frame(self.cv,bg=T.RELIEF); self._place(hdr,36,24)
 
-        self.volver_btn = tk.Button(
-            hdr, text="←  Menú", bg=T.RELIEF_LO, fg=T.PARCH,
-            font=("Georgia",10,"bold"), relief="flat", bd=0,
-            padx=14, pady=6, cursor="hand2",
-            activebackground=T.BORDER, activeforeground=T.LEAF_HI,
-            highlightthickness=1, highlightbackground=T.LEAF,
-            command=self.volver_menu
-        )
-        self.volver_btn.pack(side="left", padx=(0,18))
-        self.volver_btn.bind("<Enter>", lambda e: self.volver_btn.config(bg=T.BORDER, fg=T.LEAF_HI))
-        self.volver_btn.bind("<Leave>", lambda e: self.volver_btn.config(bg=T.RELIEF_LO, fg=T.PARCH))
+        # Mismo texto/estilo "← Menú" que usan Dados y Tragamonedas,
+        # para que se vea consistente con el resto de la app.
+        self.btn_volver=tk.Button(hdr,text="← Menú",bg=T.RELIEF_LO,fg=T.PARCH,
+                font=("Georgia",11,"bold"),relief="flat",cursor="hand2",
+                padx=10,pady=4,command=self._volver_menu)
+        self.btn_volver.pack(side="left",padx=(0,16))
+        self.btn_volver.bind("<Enter>",lambda e:self.btn_volver.config(bg=T.BORDER))
+        self.btn_volver.bind("<Leave>",lambda e:self.btn_volver.config(bg=T.RELIEF_LO))
 
         tk.Label(hdr,text="♠  ROBASINO RULETA  ♠",bg=T.RELIEF,fg=T.LEAF_HI,
                 font=("Georgia",24,"bold")).pack(side="left")
-
         bf=tk.Frame(self.cv,bg=T.RELIEF_LO,highlightbackground=T.LEAF,
                     highlightthickness=1,padx=16,pady=6)
         self._place(bf,self.W-40,24,anchor="ne")
@@ -416,6 +293,23 @@ class Ruleta:
                 font=("Georgia",10,"bold")).pack(side="left",padx=(0,10))
         self.hist_frame=tk.Frame(row,bg=T.RELIEF); self.hist_frame.pack(side="left")
 
+    # ── Volver al menú ──────────────────────────────────────────
+    def _volver_menu(self):
+        if self.spinning:
+            return  # no se puede salir a mitad de un giro (mismo criterio que Dados/Tragamonedas)
+
+        if self._worker is not None and self._worker.is_alive():
+            self._worker.stop()
+
+        # Desuscribe del GestorConexion compartido: sin esto, un
+        # "resultado_ruleta" que llegue tarde (o de una apuesta que
+        # quedó en vuelo) intentaría actualizar widgets de una vista
+        # ya destruida. Mismo criterio que Dados/Tragamonedas.
+        if self.controlador is not None:
+            self.controlador.cerrar()
+
+        self.destroy()
+
     # ── Chips ────────────────────────────────────────────────────
     def _chip_btn(self,parent,val):
         bg=self.CHIPS.get(val,T.RELIEF_LO)
@@ -475,100 +369,122 @@ class Ruleta:
 
     # ── Giro ─────────────────────────────────────────────────────
     def spin(self):
-        if self.spinning:
-            return
+        if self.spinning: return
         if not self.bets.bets:
-            self.result_sub.config(text="¡Haz una apuesta!", fg=T.LEAF_HI)
-            return
+            self.result_sub.config(text="¡Haz una apuesta!",fg=T.LEAF_HI); return
+        if self.controlador is None:
+            self.result_sub.config(text="Sin conexión al servidor.",fg="#ff4444"); return
 
-        self.spinning = True
-        self._server_result = None
+        self.spinning=True
+        self._resultado_pendiente=None
+        self._animacion_lista=False
+        self.spin_btn.config(state="disabled",bg=T.DIM)
+        self.result_lbl.config(text="…",fg=T.PARCH)
+        self.result_sub.config(text="Girando…",fg=T.PARCH)
 
-        self.spin_btn.config(state="disabled", bg=T.DIM)
-        self.result_lbl.config(text="…", fg=T.PARCH)
-        self.result_sub.config(text="Girando…", fg=T.PARCH)
+        # El servidor es quien decide número/color/premio; esto solo
+        # dispara la petición. La respuesta llega de forma asíncrona a
+        # on_resultado_servidor()/on_error_servidor() (callbacks del
+        # ControladorRuleta, suscritos vía GestorConexion).
+        self.controlador.girar(dict(self.bets.bets))
 
-        self._send({"accion": "girar_ruleta", "apuestas": dict(self.bets.bets)})
-    
-        # Iniciar únicamente la animación
-    
+        # La física de la rueda es puramente decorativa: nunca decide
+        # el número, solo entretiene mientras se espera al servidor.
+        self._frame_q=queue.Queue()
+        self._worker=SpinWorker(self._frame_q)
+        self._worker.start()
+        self.root.after(16,self._poll)
+
     def _poll(self):
         try:
             while True:
-                kind, angle, ball = self._frame_q.get_nowait()
-                self._angle = angle
-                self._ball_angle = ball
+                kind,angle,ball=self._frame_q.get_nowait()
+                self._angle=angle
                 self._draw_wheel(self._angle)
-                self._draw_ball()
-                if kind == "done":
+                if kind=="frame":
+                    self._ball_angle=ball; self._draw_ball()
+                if kind=="done":
                     self._worker.join(timeout=0.1)
-                    self._resolve(*self._server_result)
+                    self._angle_final=angle
+                    self._animacion_lista=True
+                    self._intentar_resolver()
                     return
-        except queue.Empty:
-            pass
-        self.root.after(16, self._poll)
-    def _iniciar_animacion(self, numero_ganador):
-        self._frame_q = queue.Queue()
-        self._worker = SpinWorker(self._frame_q, target_number=numero_ganador)
-        self._worker.start()
-        self.root.after(16, self._poll)
-    def _resolve(self, num, premio, creditos_servidor):
+        except queue.Empty: pass
+        self.root.after(16,self._poll)
 
-        self.result_lbl.config(
-            text=str(num),
-            fg=T.LEAF_HI
-        )
+    # ── Callbacks del ControladorRuleta (llegan desde el hilo único
+    # de escucha del GestorConexion; solo tocan widgets Tk porque
+    # Tk procesa este callback en el mismo ciclo de eventos que ya
+    # dispara root.after — ver nota en gestor_conexion.py) ──────────
+    def on_resultado_servidor(self, numero, color, premio, creditos):
+        # Este callback corre en el hilo único de escucha de
+        # GestorConexion (ver _despachar en gestor_conexion.py), NO en
+        # el hilo principal de Tkinter — hay que reencolarlo con
+        # root.after(0, ...) antes de tocar cualquier widget.
+        self.root.after(0, self._aplicar_resultado_servidor,
+                        numero, color, premio, creditos)
 
-        color = Wheel.color_of(num)
+    def _aplicar_resultado_servidor(self, numero, color, premio, creditos):
+        self._resultado_pendiente={
+            "numero": numero, "color": color,
+            "premio": premio, "creditos": creditos,
+        }
+        self._intentar_resolver()
 
-        self.result_sub.config(
-            text=Wheel.color_name(num),
-            fg=color
-        )
+    def on_error_servidor(self, mensaje):
+        # Mismo motivo: reencolar en el hilo de Tk antes de tocar widgets.
+        self.root.after(0, self._aplicar_error_servidor, mensaje)
 
-        self.bets.bets.clear()
+    def _aplicar_error_servidor(self, mensaje):
+        # p.ej. "No tienes suficientes créditos.": el servidor nunca
+        # llegó a girar, así que se devuelven las fichas apostadas.
+        self.spinning=False
+        self._animacion_lista=False; self._resultado_pendiente=None
+        if self._worker is not None and self._worker.is_alive():
+            self._worker.stop()
+        self.spin_btn.config(state="normal",bg=T.LEAF)
+        self.result_lbl.config(text="—",fg=T.LEAF_HI)
+        self.result_sub.config(text=mensaje,fg="#ff4444")
+        self.balance+=self.bets.clear()
+        self._refresh()
 
-        if premio > 0:
-            self.result_sub.config(
-                text=f"¡GANASTE ${premio}!",
-                fg=T.LEAF_HI
-            )
-        else:
-            self.result_sub.config(
-                text="Sin suerte — ¡inténtalo de nuevo!",
-                fg="#ff6666"
-            )
+    def _intentar_resolver(self):
+        if self._animacion_lista and self._resultado_pendiente is not None:
+            self._resolve(self._resultado_pendiente)
 
-        lbl = tk.Label(
-            self.hist_frame,
-            text=str(num),
-            width=3,
-            bg=Wheel.color_of(num),
-            fg="white",
-            font=("Courier",9,"bold"),
-            relief="flat",
-            pady=2
-        )
+    def _resolve(self, resultado):
+        numero=resultado["numero"]
+        color=resultado["color"]                  # "rojo"/"negro"/"verde", del servidor
+        premio=resultado["premio"]
+        creditos=resultado["creditos"]
+        color_hex={"rojo":T.RED,"negro":T.BLACK,"verde":T.GREEN}.get(color,T.PARCH)
 
-        lbl.pack(side="left", padx=1)
-        self._history.append(lbl)
+        # La bola "cae" exactamente sobre el número que mandó el
+        # servidor: se usa el ángulo final que dejó la física (solo
+        # estético) y se ubica la bola en el centro de la ranura de
+        # `numero` sobre ESE ángulo de rueda — nunca al revés.
+        idx=Wheel.ORDER.index(numero)
+        arc=360/len(Wheel.ORDER)
+        self._angle=self._angle_final
+        self._ball_angle=(self._angle_final+idx*arc)%360
+        self._draw_wheel(self._angle); self._draw_ball()
 
-        if len(self._history) > 20:
-            self._history.pop(0).destroy()
+        self.result_lbl.config(text=str(numero),fg=T.LEAF_HI)
+        if premio>0: self.result_sub.config(text=f"¡GANASTE  ${premio}!",fg=T.LEAF_HI)
+        else:        self.result_sub.config(text="Sin suerte — ¡inténtalo de nuevo!",fg="#ff6666")
 
-        self.spinning = False
+        lbl=tk.Label(self.hist_frame,text=str(numero),width=3,bg=color_hex,
+                    fg="white",font=("Courier",9,"bold"),relief="flat",pady=2)
+        lbl.pack(side="left",padx=1); self._history.append(lbl)
+        if len(self._history)>20: self._history.pop(0).destroy()
 
-        self.spin_btn.config(
-            state="normal",
-            bg=T.LEAF
-        )
-
-        # El saldo ahora viene del servidor
-        self.balance = creditos_servidor
-
-        if self.jugador is not None:
-            self.jugador.creditos = creditos_servidor
-
+        self.spinning=False; self.spin_btn.config(state="normal",bg=T.LEAF)
+        self.bets.clear()
+        # Saldo autoritativo: lo que diga el servidor, punto. Nunca se
+        # deriva de una suma local ni se "recarga" saldo inventado.
+        if creditos is not None:
+            self.balance=creditos
+        self._resultado_pendiente=None; self._animacion_lista=False
         self._refresh()
 
 # if __name__=="__main__":
