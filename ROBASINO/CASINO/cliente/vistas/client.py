@@ -8,12 +8,15 @@ Este cliente NO contiene lógica de juego ni acceso a base de datos.
 Solo:
     - envía acciones de juego ("buscar_partida", "hit", "stand")
     - recibe el estado autoritativo del servidor y lo dibuja
+
+Ya NO crea su propio hilo de escucha ni llama a recv() sobre el socket.
+El socket es compartido por todos los juegos (blackjack, tragamonedas,
+dados, ruleta); el único que lo lee es `GestorConexion`
+(controladores/gestor_conexion.py). Este cliente se suscribe con
+`register_handler` a las acciones que le interesan y se desuscribe en
+`_on_close`, igual que hacen ControladorDados y ControladorTragamonedas.
 """
 
-
-
-import threading
-import json
 import queue
 import tkinter as tk
 from tkinter import simpledialog, messagebox
@@ -24,6 +27,18 @@ import vistas.theme as theme
 
 SERVER_HOST = "127.0.0.1"  # cambiar por la IP del servidor si es otra máquina
 SERVER_PORT = 5555
+
+# Acciones del servidor que esta vista entiende.
+_ACCIONES = (
+    "apuesta_error",
+    "creditos_actualizados",
+    "esperando",
+    "iniciar_partida",
+    "estado_partida",
+    "rival_desconectado",
+    "error",
+)
+
 
 class BetDialog(simpledialog.Dialog):
     """Ventana modal para elegir cuánto apostar antes de buscar partida.
@@ -86,11 +101,15 @@ class BlackjackClient(BaseGameUI):
         # ---- identidad ----
         self.parent = parent
         self.jugador = jugador
-        self.sock = conexion
-        threading.Thread(
-            target=self._listen_server,
-            daemon=True
-        ).start()
+
+        # `conexion` ya no es un socket crudo: es el GestorConexion
+        # compartido, creado una sola vez al hacer login. Nos
+        # suscribimos a nuestras acciones en vez de abrir un hilo de
+        # escucha propio.
+        self.gestor = conexion
+        self._handlers = {accion: self._on_server_message for accion in _ACCIONES}
+        for accion, callback in self._handlers.items():
+            self.gestor.register_handler(accion, callback)
 
         self.player_id = jugador.client_id  
         self.username = jugador.usuario
@@ -113,7 +132,6 @@ class BlackjackClient(BaseGameUI):
         self.waiting_for_match = False
         self.logged_in = True
 
-        self.sock = conexion
         self.msg_queue = queue.Queue()
 
         self._init_window("Blackjack - Cliente (Jugador)")
@@ -198,7 +216,6 @@ class BlackjackClient(BaseGameUI):
             self.root, text="Puntos: 0", font=theme.FONT_SCORE, fg=theme.TEXT_WARN)
         self.player_score_label.place(relx=0.04, rely=0.77)
 
-        # Botones
         btn_panel = self._panel(0.30, 0.85, 0.40, 0.08)
         self.hit_btn = self._themed_button(btn_panel, "Pedir carta", self.on_hit)
         self.hit_btn.pack(side="left", expand=True, padx=10, pady=8)
@@ -218,30 +235,17 @@ class BlackjackClient(BaseGameUI):
 
     # ---------------- Red ----------------
 
-
-    def _listen_server(self):
-        buffer = ""
-        while True:
-            try:
-                data = self.sock.recv(4096)
-                if not data:
-                    break
-                buffer += data.decode("utf-8")
-                while "\n" in buffer:
-                    line, buffer = buffer.split("\n", 1)
-                    if line.strip():
-                        msg = json.loads(line)
-                        self.msg_queue.put(("server_msg", msg))
-            except (ConnectionResetError, OSError):
-                break
-        self.msg_queue.put(("status", "Desconectado del servidor."))
+    def _on_server_message(self, msg):
+        """Handler único registrado en GestorConexion para todas las
+        acciones de este juego. Se ejecuta en el hilo único de escucha
+        compartido, así que solo encola el mensaje: el procesamiento
+        real (que toca widgets de Tkinter) sigue pasando por
+        `_process_queue`, en el hilo principal de la GUI, exactamente
+        igual que antes."""
+        self.msg_queue.put(("server_msg", msg))
 
     def _send(self, msg):
-        if self.sock:
-            try:
-                self.sock.sendall((json.dumps(msg) + "\n").encode("utf-8"))
-            except OSError:
-                pass
+        self.gestor.enviar(msg)
 
     def _process_queue(self):
         try:
@@ -390,10 +394,14 @@ class BlackjackClient(BaseGameUI):
 
     # ---------------- Cierre ----------------
     def _on_close(self):
+        # Nos desuscribimos de GestorConexion: dejamos de recibir
+        # mensajes de blackjack, pero el socket sigue vivo porque es
+        # compartido por el resto de los juegos (antes este método
+        # llamaba a self.sock.close(), lo que rompía la conexión de
+        # toda la sesión, no solo la de este juego).
+        self.gestor.unregister_all(self._handlers)
         try:
-            if self.sock:
-                self._send({"accion": "logout"})
-                self.sock.close()
-        except OSError:
+            self._send({"accion": "logout"})
+        except Exception:
             pass
         self.root.destroy()
